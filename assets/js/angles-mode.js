@@ -1,11 +1,15 @@
 /* ========== ANGLES MODE FUNCTIONALITY ========== */
 let anglesAOILayer = null;
-const anglesAllRoadsLayer = L.geoJSON(null, { 
-  style: { weight: 1, opacity: 0.5, color: '#888' } 
+let anglesAOIWasVisible = false;
+let anglesAllRoadsWasVisible = true;
+let anglesSegmentsWasVisible = true;
+let anglesIntersectionsWasVisible = true;
+const anglesAllRoadsLayer = L.geoJSON(null, {
+  style: { weight: 1, opacity: 0.5, color: '#888' }
 }).addTo(map);
 
-const anglesSegmentsLayer = L.geoJSON(null, { 
-  style: { weight: 3, color: '#9D2235', opacity: 0.8 } 
+const anglesSegmentsLayer = L.geoJSON(null, {
+  style: { weight: 3, color: '#9D2235', opacity: 0.8 }
 }).addTo(map);
 
 const anglesIntersectionsLayer = L.geoJSON(null, {
@@ -31,6 +35,49 @@ function clearAnglesLayers() {
     map.removeLayer(anglesAOILayer);
     anglesAOILayer = null;
   }
+  anglesAOIWasVisible = false;
+}
+
+function detachAnglesMode() {
+  anglesAllRoadsWasVisible = map.hasLayer(anglesAllRoadsLayer);
+  anglesSegmentsWasVisible = map.hasLayer(anglesSegmentsLayer);
+  anglesIntersectionsWasVisible = map.hasLayer(anglesIntersectionsLayer);
+
+  if (anglesAllRoadsWasVisible) {
+    map.removeLayer(anglesAllRoadsLayer);
+  }
+  if (anglesSegmentsWasVisible) {
+    map.removeLayer(anglesSegmentsLayer);
+  }
+  if (anglesIntersectionsWasVisible) {
+    map.removeLayer(anglesIntersectionsLayer);
+  }
+
+  anglesAOIWasVisible = !!(anglesAOILayer && map.hasLayer(anglesAOILayer));
+  if (anglesAOIWasVisible) {
+    map.removeLayer(anglesAOILayer);
+  }
+}
+
+function restoreAnglesMode() {
+  if (anglesAllRoadsWasVisible && !map.hasLayer(anglesAllRoadsLayer)) {
+    anglesAllRoadsLayer.addTo(map);
+  }
+  if (anglesSegmentsWasVisible && !map.hasLayer(anglesSegmentsLayer)) {
+    anglesSegmentsLayer.addTo(map);
+  }
+  if (anglesIntersectionsWasVisible && !map.hasLayer(anglesIntersectionsLayer)) {
+    anglesIntersectionsLayer.addTo(map);
+  }
+
+  if (anglesAOIWasVisible && anglesAOILayer && !map.hasLayer(anglesAOILayer)) {
+    anglesAOILayer.addTo(map);
+  }
+
+  anglesAllRoadsWasVisible = map.hasLayer(anglesAllRoadsLayer);
+  anglesSegmentsWasVisible = map.hasLayer(anglesSegmentsLayer);
+  anglesIntersectionsWasVisible = map.hasLayer(anglesIntersectionsLayer);
+  anglesAOIWasVisible = false;
 }
 
 // Listen for polygon creation

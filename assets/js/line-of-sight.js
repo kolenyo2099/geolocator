@@ -6,6 +6,62 @@ let mapboxToken = '';
 let elevationOverlay = null;
 let losMode = 'mapbox';
 let peakFinderPanel = null;
+let losMarkerAWasVisible = false;
+let losMarkerBWasVisible = false;
+let losLineWasVisible = false;
+let losDetachedView = '2d';
+
+function detachLOSMode() {
+  losMarkerAWasVisible = !!(losMarkerA && map.hasLayer(losMarkerA));
+  if (losMarkerAWasVisible) {
+    map.removeLayer(losMarkerA);
+  }
+
+  losMarkerBWasVisible = !!(losMarkerB && map.hasLayer(losMarkerB));
+  if (losMarkerBWasVisible) {
+    map.removeLayer(losMarkerB);
+  }
+
+  losLineWasVisible = !!(losLine && map.hasLayer(losLine));
+  if (losLineWasVisible) {
+    map.removeLayer(losLine);
+  }
+
+  if ((currentView === 'streetview' || currentView === 'mapillary') && typeof backToMap === 'function') {
+    backToMap();
+  }
+
+  losDetachedView = (currentView === '3d' || currentView === 'peakfinder') ? currentView : '2d';
+  if (currentView === '3d' || currentView === 'peakfinder') {
+    toggleMapView();
+  }
+}
+
+function restoreLOSMode() {
+  if (losMarkerA && losMarkerAWasVisible && !map.hasLayer(losMarkerA)) {
+    losMarkerA.addTo(map);
+  }
+
+  if (losMarkerB && losMarkerBWasVisible && !map.hasLayer(losMarkerB)) {
+    losMarkerB.addTo(map);
+  }
+
+  if (losLine && losLineWasVisible && !map.hasLayer(losLine)) {
+    losLine.addTo(map);
+  }
+
+  if (losDetachedView === '3d' && losPointA && losPointB) {
+    initialize3DView();
+  } else if (losDetachedView === 'peakfinder' && losPointA && losPointB) {
+    initializePeakFinder();
+  }
+
+  updateLOSStatus();
+  losDetachedView = '2d';
+  losMarkerAWasVisible = false;
+  losMarkerBWasVisible = false;
+  losLineWasVisible = false;
+}
 
 function setLOSMode(mode) {
   losMode = mode;
@@ -240,15 +296,18 @@ function clearLineOfSight() {
     window.map3D.remove();
     window.map3D = null;
   }
-  
+
   if (peakFinderPanel) {
     peakFinderPanel = null;
   }
   
   const progress = document.getElementById('pfcanvasprogress');
   if (progress) progress.style.display = 'block';
-  
+
   updateLOSStatus();
+  losMarkerAWasVisible = false;
+  losMarkerBWasVisible = false;
+  losLineWasVisible = false;
 }
 
 async function initializePeakFinder() {

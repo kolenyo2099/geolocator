@@ -217,38 +217,198 @@ const mapCanvas = document.getElementById('mapCanvas');
 const mapCanvasCtx = mapCanvas.getContext('2d');
 let mapShapes = [];
 
+let placesMarkerVisible = false;
+let placesCircleVisible = false;
+let placesClusterAttached = true;
+let groundDetachedView = '2d';
+let groundControlsWereVisible = false;
+let drawCanvasWasActive = false;
+let draw3DCanvasWasActive = false;
+let drawDetachedView = '2d';
+
+function detachPlacesMode() {
+  placesClusterAttached = map.hasLayer(cluster);
+  if (placesClusterAttached) {
+    map.removeLayer(cluster);
+  }
+
+  placesMarkerVisible = !!(pin && map.hasLayer(pin));
+  if (placesMarkerVisible) {
+    map.removeLayer(pin);
+  }
+
+  placesCircleVisible = !!(circle && map.hasLayer(circle));
+  if (placesCircleVisible) {
+    map.removeLayer(circle);
+  }
+}
+
+function restorePlacesMode() {
+  if (placesClusterAttached && !map.hasLayer(cluster)) {
+    map.addLayer(cluster);
+  }
+
+  if (pin && placesMarkerVisible && !map.hasLayer(pin)) {
+    pin.addTo(map);
+  }
+
+  if (circle && placesCircleVisible && !map.hasLayer(circle)) {
+    circle.addTo(map);
+  }
+
+  placesClusterAttached = map.hasLayer(cluster);
+  placesMarkerVisible = !!(pin && map.hasLayer(pin));
+  placesCircleVisible = !!(circle && map.hasLayer(circle));
+}
+
+function detachGroundMode() {
+  const controls = document.getElementById('streetViewControls');
+  groundControlsWereVisible = controls.classList.contains('visible');
+  controls.classList.remove('visible');
+
+  if (streetViewMarker && streetViewMarker.marker && map.hasLayer(streetViewMarker.marker)) {
+    map.removeLayer(streetViewMarker.marker);
+    streetViewMarker.visible = true;
+  } else if (streetViewMarker) {
+    streetViewMarker.visible = false;
+  }
+
+  groundDetachedView = currentView;
+  if ((currentView === 'streetview' || currentView === 'mapillary') && typeof backToMap === 'function') {
+    backToMap();
+    controls.classList.remove('visible');
+  }
+}
+
+function restoreGroundMode() {
+  const controls = document.getElementById('streetViewControls');
+
+  if (streetViewMarker && streetViewMarker.marker && streetViewMarker.visible) {
+    streetViewMarker.marker.addTo(map);
+    controls.classList.add('visible');
+    document.getElementById('status').textContent = 'Location selected - Choose a view option';
+  } else {
+    controls.classList.toggle('visible', groundControlsWereVisible);
+  }
+
+  if (groundDetachedView === 'streetview' && streetViewMarker && typeof showStreetView === 'function') {
+    showStreetView();
+  } else if (groundDetachedView === 'mapillary' && streetViewMarker && typeof showMapillary === 'function') {
+    showMapillary();
+  }
+
+  groundDetachedView = '2d';
+  groundControlsWereVisible = controls.classList.contains('visible');
+}
+
+function detachDrawMode() {
+  drawCanvasWasActive = mapCanvas.classList.contains('active');
+  const view3DCanvas = document.getElementById('view3DCanvas');
+  draw3DCanvasWasActive = !!(view3DCanvas && view3DCanvas.classList.contains('active'));
+  drawDetachedView = currentView;
+
+  if (drawCanvasWasActive) {
+    mapCanvas.classList.remove('active');
+  }
+  if (draw3DCanvasWasActive && view3DCanvas) {
+    view3DCanvas.classList.remove('active');
+  }
+
+  if (currentView === '3d' || currentView === 'peakfinder') {
+    toggleMapView();
+  }
+
+  if (!map.dragging._enabled) {
+    map.dragging.enable();
+  }
+}
+
+function restoreDrawMode() {
+  const view3DCanvas = document.getElementById('view3DCanvas');
+
+  if (drawDetachedView !== '2d' && currentView === '2d') {
+    toggleMapView();
+  } else if (currentView === '2d' && drawCanvasWasActive) {
+    mapCanvas.classList.add('active');
+    map.dragging.disable();
+    resizeMapCanvas();
+  } else if (currentView === '3d' && view3DCanvas && draw3DCanvasWasActive) {
+    view3DCanvas.classList.add('active');
+    setup3DViewCanvas();
+  }
+
+  drawCanvasWasActive = false;
+  draw3DCanvasWasActive = false;
+  drawDetachedView = '2d';
+}
+
+function detachModeResources(mode) {
+  if (mode === 'places') {
+    detachPlacesMode();
+  } else if (mode === 'ground') {
+    detachGroundMode();
+  } else if (mode === 'los') {
+    if (typeof detachLOSMode === 'function') detachLOSMode();
+  } else if (mode === 'angles') {
+    if (typeof detachAnglesMode === 'function') detachAnglesMode();
+  } else if (mode === 'draw') {
+    detachDrawMode();
+  }
+}
+
+function restoreModeResources(mode) {
+  if (mode === 'places') {
+    restorePlacesMode();
+  } else if (mode === 'ground') {
+    restoreGroundMode();
+  } else if (mode === 'los') {
+    if (typeof restoreLOSMode === 'function') restoreLOSMode();
+  } else if (mode === 'angles') {
+    if (typeof restoreAnglesMode === 'function') restoreAnglesMode();
+  } else if (mode === 'draw') {
+    restoreDrawMode();
+  }
+}
+
 function setMapMode(mode) {
+  if (mode === mapMode) return;
+
+  const previousMode = mapMode;
+  detachModeResources(previousMode);
+
   mapMode = mode;
-  
+
   document.getElementById('placesMode').classList.toggle('active', mode === 'places');
   document.getElementById('groundMode').classList.toggle('active', mode === 'ground');
   document.getElementById('drawMode').classList.toggle('active', mode === 'draw');
   document.getElementById('losMode').classList.toggle('active', mode === 'los');
   document.getElementById('anglesMode').classList.toggle('active', mode === 'angles');
-  
+
   document.getElementById('placesControls').style.display = mode === 'places' ? 'block' : 'none';
   document.getElementById('groundControls').style.display = mode === 'ground' ? 'block' : 'none';
   document.getElementById('anglesControls').style.display = mode === 'angles' ? 'block' : 'none';
   document.getElementById('losControls').style.display = mode === 'los' ? 'block' : 'none';
-  
+
+  mapCanvas.classList.remove('active');
+  map.dragging.enable();
+
+  const view3DCanvas = document.getElementById('view3DCanvas');
+  if (view3DCanvas) view3DCanvas.classList.remove('active');
+
   if (mode === 'places') {
-    mapCanvas.classList.remove('active');
-    map.dragging.enable();
     document.getElementById('status').textContent = 'Click map to search places';
-    clearAnglesLayers();
-    
+
     if (currentView === '3d' || currentView === 'peakfinder') {
       toggleMapView();
     }
+    if ((currentView === 'streetview' || currentView === 'mapillary') && typeof backToMap === 'function') {
+      backToMap();
+    }
   } else if (mode === 'ground') {
-    mapCanvas.classList.remove('active');
-    map.dragging.enable();
     document.getElementById('status').textContent = 'Click map for ground view';
-    clearAnglesLayers();
   } else if (mode === 'draw') {
     document.getElementById('status').textContent = 'Drawing mode active!';
-    clearAnglesLayers();
-    
+
     if (currentView === '2d') {
       mapCanvas.classList.add('active');
       map.dragging.disable();
@@ -256,23 +416,28 @@ function setMapMode(mode) {
     } else if (currentView === '3d') {
       view3DCanvas.classList.add('active');
       setup3DViewCanvas();
+    } else {
+      if (typeof backToMap === 'function') backToMap();
+      mapCanvas.classList.add('active');
+      map.dragging.disable();
+      resizeMapCanvas();
     }
   } else if (mode === 'los') {
-    mapCanvas.classList.remove('active');
-    map.dragging.enable();
-    clearLineOfSight();
-    clearAnglesLayers();
+    document.getElementById('status').textContent = 'Click point A (observer)';
     loadMapboxToken();
     updateLOSStatus();
   } else if (mode === 'angles') {
-    mapCanvas.classList.remove('active');
-    map.dragging.enable();
     document.getElementById('status').textContent = 'Draw polygon area to analyze intersections';
-    
+
     if (currentView === '3d' || currentView === 'peakfinder') {
       toggleMapView();
     }
+    if ((currentView === 'streetview' || currentView === 'mapillary') && typeof backToMap === 'function') {
+      backToMap();
+    }
   }
+
+  restoreModeResources(mode);
 }
 
 function toggleMapView() {
@@ -511,8 +676,9 @@ map.on('click', e => {
   } else if (mapMode === 'ground') {
     if (streetViewMarker && streetViewMarker.marker) {
       map.removeLayer(streetViewMarker.marker);
+      streetViewMarker.visible = false;
     }
-    
+
     const marker = L.marker(e.latlng, {
       icon: L.icon({
         iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png',
@@ -527,7 +693,8 @@ map.on('click', e => {
     streetViewMarker = {
       lat: e.latlng.lat,
       lng: e.latlng.lng,
-      marker: marker
+      marker: marker,
+      visible: true
     };
     
     const controls = document.getElementById('streetViewControls');
