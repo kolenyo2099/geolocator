@@ -84,7 +84,7 @@
         <!-- Street View Controls -->
         <div class="street-view-controls" id="streetViewControls">
           <button class="street-view-btn" onclick="showStreetView()">🔍 Google Street View</button>
-          <button class="street-view-btn" onclick="showMapillary()">📷 Mapillary</button>
+          <button class="street-view-btn" id="mapillaryLaunchButton" onclick="showMapillary()">📷 Mapillary</button>
           <button class="street-view-btn" onclick="backToMap()">🗺️ Back to Map</button>
         </div>
         
@@ -144,7 +144,7 @@
 
           <div id="groundControls" style="display:none">
             <p style="margin-top:1rem">Click the map to select a location for ground-level imagery</p>
-            
+
             <div style="margin-top:1rem;padding:1rem;background:#f8f9fa;border-radius:8px;border-left:3px solid #9D2235">
               <p style="font-size:.85rem;margin-bottom:.5rem;font-weight:600">Available Views:</p>
               <ul style="font-size:.8rem;color:#666;line-height:1.5;padding-left:1.2rem">
@@ -154,6 +154,31 @@
               <p style="font-size:.75rem;color:#999;margin-top:.5rem;font-style:italic">
                 Note: Coverage varies by location. Try both sources for best results.
               </p>
+            </div>
+
+            <div class="mapillary-settings" id="mapillarySettings">
+              <div class="mapillary-settings__header">
+                <h3>Mapillary Access (Sept 2025 update)</h3>
+                <a class="mapillary-settings__link" href="https://www.mapillary.com/developer/api-documentation" target="_blank" rel="noopener">
+                  Latest docs ↗
+                </a>
+              </div>
+              <p class="mapillary-settings__intro">
+                Mapillary now issues short-lived access tokens via OAuth. Register an app in the Mapillary developer dashboard, copy the client ID and client secret, then refresh the token below before launching imagery.
+              </p>
+              <label for="mapillaryClientId" class="mapillary-settings__label">Client ID</label>
+              <input type="text" id="mapillaryClientId" class="mapillary-settings__input" placeholder="4142…" autocomplete="off" spellcheck="false"/>
+
+              <label for="mapillaryClientSecret" class="mapillary-settings__label">Client Secret</label>
+              <input type="password" id="mapillaryClientSecret" class="mapillary-settings__input" placeholder="••••••" autocomplete="off" spellcheck="false"/>
+
+              <div class="mapillary-settings__actions">
+                <button class="mapillary-settings__btn" id="mapillarySaveCredentials">💾 Save</button>
+                <button class="mapillary-settings__btn mapillary-settings__btn--ghost" id="mapillaryClearCredentials">🧹 Clear</button>
+                <button class="mapillary-settings__btn" id="mapillaryRefreshToken">🔄 Refresh token</button>
+              </div>
+
+              <div class="mapillary-settings__status" id="mapillaryTokenStatus">No Mapillary credentials saved.</div>
             </div>
           </div>
 
@@ -572,6 +597,7 @@
   <script src="assets/js/sticky-notes.js"></script>
   <script src="assets/js/image-zoom-pan.js"></script>
   <script src="assets/js/line-of-sight.js"></script>
+  <script src="assets/js/mapillary-auth.js"></script>
   <script src="assets/js/street-view.js"></script>
 </body>
 </html>

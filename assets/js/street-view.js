@@ -30,37 +30,66 @@ async function showMapillary() {
     return;
   }
   
+  const statusEl = document.getElementById('status');
   const lat = streetViewMarker.lat;
   const lng = streetViewMarker.lng;
-  
+
   if (typeof mapillary === 'undefined') {
     alert('Mapillary library failed to load from CDN. This could be due to network/firewall blocking unpkg.com, ad blocker interference, or browser compatibility. Please use Google Street View instead.');
     return;
   }
-  
+
   if (!mapillary.Viewer) {
     alert('Mapillary library loaded but Viewer class not found. Please use Google Street View instead.');
     return;
   }
-  
-  document.getElementById('status').textContent = 'Searching for Mapillary imagery...';
-  
+
   try {
-    const accessToken = 'MLY|4142433049200173|72206abe5035850d6743b23a49c41333';
-    
+    let accessToken;
+    if (typeof mapillaryAuth === 'undefined') {
+      throw new Error('Mapillary helper not available. Refresh the page.');
+    }
+
+    statusEl.textContent = 'Authenticating with Mapillary...';
+
+    try {
+      accessToken = await mapillaryAuth.getAccessToken();
+    } catch (authError) {
+      console.error('Mapillary auth error:', authError);
+      statusEl.textContent = 'Mapillary token missing. Update credentials below.';
+      alert('Mapillary now requires a short-lived access token. Save your client ID and secret in the Mapillary settings panel, refresh the token, then try again.');
+      return;
+    }
+
+    statusEl.textContent = 'Searching for Mapillary imagery...';
     const offset = 0.001;
     const bbox = `${lng-offset},${lat-offset},${lng+offset},${lat+offset}`;
-    
-    const apiUrl = `https://graph.mapillary.com/images?access_token=${accessToken}&fields=id,geometry,captured_at&bbox=${bbox}&limit=1`;
-    
+
+    const apiUrl = `https://graph.mapillary.com/images?access_token=${encodeURIComponent(accessToken)}&fields=id,computed_geometry&bbox=${bbox}&limit=1`;
+
     const response = await fetch(apiUrl);
-    
+
     if (!response.ok) {
-      throw new Error(`API request failed: ${response.status}`);
+      if (response.status === 401 || response.status === 403) {
+        if (typeof mapillaryAuth !== 'undefined') {
+          mapillaryAuth.clearAccessToken();
+        }
+        throw new Error('Mapillary token expired or is invalid. Refresh it in the settings panel and try again.');
+      }
+
+      let errorDetail = '';
+      try {
+        const errorPayload = await response.json();
+        errorDetail = errorPayload?.error?.message || '';
+      } catch (e) {
+        // ignore parse error
+      }
+
+      throw new Error(errorDetail || `API request failed (${response.status})`);
     }
-    
+
     const data = await response.json();
-    
+
     if (!data.data || data.data.length === 0) {
       alert('No Mapillary imagery found at this location. Try a major city (Paris, NYC, Amsterdam), urban/downtown areas, or Google Street View instead (better coverage).');
       document.getElementById('status').textContent = 'No Mapillary imagery found';
@@ -98,13 +127,13 @@ async function showMapillary() {
       container: 'mapillaryViewer',
       imageId: imageId
     });
-    
-    document.getElementById('status').textContent = 'Mapillary loaded successfully';
-    
+
+    statusEl.textContent = 'Mapillary loaded successfully';
+
   } catch (error) {
     console.error('Mapillary error:', error);
-    alert(`Failed to load Mapillary: ${error.message}. This location may not have coverage. Try Google Street View instead or a different location with better coverage.`);
-    document.getElementById('status').textContent = 'Mapillary failed - try Street View';
+    alert(`Failed to load Mapillary: ${error.message}. This location may not have coverage or the token may be invalid.`);
+    statusEl.textContent = 'Mapillary failed - check credentials or coverage';
     backToMap();
   }
 }
@@ -177,6 +206,30 @@ document.addEventListener('keydown', (e) => {
     hideHelp();
   }
 });
+
+function updateMapillaryLaunchState(status) {
+  const button = document.getElementById('mapillaryLaunchButton');
+  if (!button) return;
+  const state = status || (typeof mapillaryAuth !== 'undefined' ? mapillaryAuth.getStatus() : null);
+  if (!state) {
+    button.disabled = false;
+    button.title = 'Open Mapillary imagery for the selected location';
+    return;
+  }
+  button.disabled = !state.hasToken;
+  button.title = state.hasToken
+    ? 'Open Mapillary imagery for the selected location'
+    : 'Save credentials and refresh the Mapillary token first.';
+}
+
+if (typeof mapillaryAuth !== 'undefined') {
+  updateMapillaryLaunchState(mapillaryAuth.getStatus());
+  document.addEventListener('mapillary-auth-updated', (event) => {
+    updateMapillaryLaunchState(event.detail);
+  });
+} else {
+  console.warn('mapillaryAuth helper unavailable; Mapillary button state will not auto-update.');
+}
 
 initFilters();
 document.getElementById('streetViewControls').classList.remove('visible');
