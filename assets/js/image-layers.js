@@ -17,6 +17,125 @@ const imageViewer = document.getElementById('imageViewer');
 const imageCanvas = document.getElementById('imageCanvas');
 const ctx = imageCanvas.getContext('2d');
 
+function worldToLayerCoords(worldX, worldY, layer, options = {}) {
+  if (!layer) return null;
+
+  const { allowOutside = false } = options;
+  const w = layer.image.width * layer.scale;
+  const h = layer.image.height * layer.scale;
+  const centerX = layer.x + w / 2;
+  const centerY = layer.y + h / 2;
+  const angleRad = (layer.rotation || 0) * Math.PI / 180;
+  const dx = worldX - centerX;
+  const dy = worldY - centerY;
+
+  const cos = Math.cos(angleRad);
+  const sin = Math.sin(angleRad);
+  const unrotatedX = dx * cos + dy * sin;
+  const unrotatedY = -dx * sin + dy * cos;
+
+  const scaledX = unrotatedX + w / 2;
+  const scaledY = unrotatedY + h / 2;
+
+  if (!allowOutside && (scaledX < 0 || scaledX > w || scaledY < 0 || scaledY > h)) {
+    return null;
+  }
+
+  return {
+    x: scaledX / layer.scale,
+    y: scaledY / layer.scale
+  };
+}
+
+function layerCoordsToWorld(point, layer) {
+  if (!layer || !point) return null;
+
+  const w = layer.image.width * layer.scale;
+  const h = layer.image.height * layer.scale;
+  const centerX = layer.x + w / 2;
+  const centerY = layer.y + h / 2;
+  const scaledX = point.x * layer.scale;
+  const scaledY = point.y * layer.scale;
+  const offsetX = scaledX - w / 2;
+  const offsetY = scaledY - h / 2;
+  const angleRad = (layer.rotation || 0) * Math.PI / 180;
+
+  const cos = Math.cos(angleRad);
+  const sin = Math.sin(angleRad);
+  const rotatedX = offsetX * cos - offsetY * sin;
+  const rotatedY = offsetX * sin + offsetY * cos;
+
+  return {
+    x: rotatedX + centerX,
+    y: rotatedY + centerY
+  };
+}
+
+function convertImageShapeToWorld(shape, layer) {
+  if (!shape) return null;
+
+  if (!shape.layerId) {
+    return shape;
+  }
+
+  if (!layer) return null;
+
+  const base = {
+    type: shape.type,
+    color: shape.color,
+    dashed: shape.dashed,
+    lineWidth: shape.lineWidth,
+    filled: shape.filled,
+    fillOpacity: shape.fillOpacity
+  };
+
+  if (shape.type === 'polygon' && Array.isArray(shape.points)) {
+    const points = shape.points
+      .map(pt => layerCoordsToWorld(pt, layer))
+      .filter(Boolean)
+      .map(pt => ({ x: pt.x, y: pt.y }));
+
+    if (points.length === 0) return null;
+
+    return {
+      ...base,
+      points
+    };
+  }
+
+  if (shape.start && shape.end) {
+    const start = layerCoordsToWorld(shape.start, layer);
+    const end = layerCoordsToWorld(shape.end, layer);
+    if (!start || !end) return null;
+
+    return {
+      ...base,
+      startX: start.x,
+      startY: start.y,
+      endX: end.x,
+      endY: end.y
+    };
+  }
+
+  if (typeof shape.startX === 'number' && typeof shape.startY === 'number') {
+    return shape;
+  }
+
+  return null;
+}
+
+function findTopVisibleLayerAt(worldX, worldY) {
+  for (let i = imageLayers.length - 1; i >= 0; i--) {
+    const layer = imageLayers[i];
+    if (!layer.visible) continue;
+    const localPoint = worldToLayerCoords(worldX, worldY, layer);
+    if (localPoint) {
+      return { layer, localPoint };
+    }
+  }
+  return null;
+}
+
 function initializeCanvas() {
   const container = document.querySelector('.image-canvas-container');
   imageCanvas.width = container.clientWidth;
@@ -371,9 +490,14 @@ function removeLayer(layerId, event) {
   event.stopPropagation();
   imageLayers = imageLayers.filter(l => l.id !== layerId);
   if (selectedLayerId === layerId) selectedLayerId = null;
-  
+  drawingShapes = drawingShapes.filter(shape => shape.layerId !== layerId);
+  if (polygonLayerId === layerId) {
+    polygonLayerId = null;
+    imagePolygonPoints = [];
+  }
+
   updateLayersList();
-  
+
   if (imageLayers.length === 0) {
     document.querySelector('.no-image').style.display = 'flex';
     document.querySelector('.image-canvas-container').style.display = 'none';
@@ -453,8 +577,38 @@ function redrawAllLayers() {
   });
   
   drawingShapes.forEach(shape => {
-    drawShapeOnContext(ctx, shape);
+    if (shape.layerId) {
+      const layer = imageLayers.find(l => l.id === shape.layerId && l.visible);
+      if (!layer) return;
+      const worldShape = convertImageShapeToWorld(shape, layer);
+      if (worldShape) drawShapeOnContext(ctx, worldShape);
+    } else {
+      drawShapeOnContext(ctx, shape);
+    }
   });
+
+  if (currentTool === 'polygon' && imagePolygonPoints.length > 0 && polygonLayerId) {
+    const layer = imageLayers.find(l => l.id === polygonLayerId && l.visible);
+    if (layer) {
+      const previewPoints = imagePolygonPoints
+        .map(pt => layerCoordsToWorld(pt, layer))
+        .filter(Boolean);
+
+      if (previewPoints.length > 0) {
+        ctx.save();
+        ctx.fillStyle = currentColor;
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = Math.max(1, 2 / imageZoom);
+        previewPoints.forEach(pt => {
+          ctx.beginPath();
+          ctx.arc(pt.x, pt.y, 4 / imageZoom, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+        });
+        ctx.restore();
+      }
+    }
+  }
   ctx.setTransform(1, 0, 0, 1, 0, 0);
 }
 

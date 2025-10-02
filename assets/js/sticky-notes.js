@@ -96,8 +96,15 @@ function selectTool(tool) {
     btn.classList.toggle('active', btn.dataset.tool === tool);
   });
   imagePolygonPoints = [];
+  polygonLayerId = null;
+
+  if (imageDrawing) {
+    imageDrawing = false;
+    activeDrawingLayerId = null;
+    imageStartLocal = null;
+  }
   mapPolygonPoints = [];
-  
+
   if (tool === 'pan') {
     imageCanvas.classList.add('pan-cursor');
   } else if (tool === 'note') {
@@ -154,79 +161,115 @@ function getCanvasCoords(e, canvas) {
 
 function handleDrawingMouseDown(e) {
   const coords = getCanvasCoords(e, imageCanvas);
-  
+
+  const hit = findTopVisibleLayerAt(coords.x, coords.y);
+  if (!hit) return;
+
+  const { layer, localPoint } = hit;
+  selectedLayerId = layer.id;
+  updateLayersList();
+
   if (currentTool === 'polygon') {
-    imagePolygonPoints.push(coords);
+    if (polygonLayerId && polygonLayerId !== layer.id) {
+      imagePolygonPoints = [];
+    }
+    polygonLayerId = layer.id;
+    imagePolygonPoints.push({ x: localPoint.x, y: localPoint.y });
     redrawAllLayers();
-    
-    ctx.fillStyle = currentColor;
-    ctx.beginPath();
-    ctx.arc(coords.x, coords.y, 4, 0, 2 * Math.PI);
-    ctx.fill();
-    
     return;
   }
-  
+
   imageDrawing = true;
-  imageStartX = coords.x;
-  imageStartY = coords.y;
+  activeDrawingLayerId = layer.id;
+  imageStartLocal = { x: localPoint.x, y: localPoint.y };
 }
 
 function handleDrawingMouseMove(e) {
-  if (!imageDrawing) return;
-  
+  if (!imageDrawing || !activeDrawingLayerId) return;
+
+  const layer = imageLayers.find(l => l.id === activeDrawingLayerId);
+  if (!layer) return;
+
   const coords = getCanvasCoords(e, imageCanvas);
-  
   redrawAllLayers();
-  
+
+  const localEnd = worldToLayerCoords(coords.x, coords.y, layer, { allowOutside: true }) || {
+    x: imageStartLocal.x,
+    y: imageStartLocal.y
+  };
+
   const previewShape = {
+    layerId: layer.id,
     type: currentTool,
     color: currentColor,
     dashed: isDashed,
     lineWidth: currentLineWidth,
     filled: isFilled,
     fillOpacity: fillOpacity,
-    startX: imageStartX, startY: imageStartY,
-    endX: coords.x, endY: coords.y
+    start: { ...imageStartLocal },
+    end: localEnd
   };
-  
-  drawShapeOnContext(ctx, previewShape);
+
+  const worldShape = convertImageShapeToWorld(previewShape, layer);
+  if (worldShape) {
+    drawShapeOnContext(ctx, worldShape);
+  }
 }
 
 function handleDrawingMouseUp(e) {
-  if (!imageDrawing) return;
-  
+  if (!imageDrawing || !activeDrawingLayerId) return;
+
+  const layer = imageLayers.find(l => l.id === activeDrawingLayerId);
+  if (!layer) {
+    imageDrawing = false;
+    activeDrawingLayerId = null;
+    imageStartLocal = null;
+    return;
+  }
+
   const coords = getCanvasCoords(e, imageCanvas);
-  
+  const localEnd = worldToLayerCoords(coords.x, coords.y, layer, { allowOutside: true }) || {
+    x: imageStartLocal.x,
+    y: imageStartLocal.y
+  };
+
   const shape = {
+    layerId: layer.id,
     type: currentTool,
     color: currentColor,
     dashed: isDashed,
     lineWidth: currentLineWidth,
     filled: isFilled,
     fillOpacity: fillOpacity,
-    startX: imageStartX, startY: imageStartY,
-    endX: coords.x, endY: coords.y
+    start: { ...imageStartLocal },
+    end: localEnd
   };
-  
+
   drawingShapes.push(shape);
   imageDrawing = false;
+  activeDrawingLayerId = null;
+  imageStartLocal = null;
   redrawAllLayers();
 }
 
 imageCanvas.addEventListener('dblclick', (e) => {
-  if (currentTool === 'polygon' && imagePolygonPoints.length > 2) {
-    const shape = {
-      type: 'polygon',
-      color: currentColor,
-      dashed: isDashed,
-      lineWidth: currentLineWidth,
-      filled: isFilled,
-      fillOpacity: fillOpacity,
-      points: [...imagePolygonPoints]
-    };
-    drawingShapes.push(shape);
+  if (currentTool === 'polygon' && imagePolygonPoints.length > 2 && polygonLayerId) {
+    const layer = imageLayers.find(l => l.id === polygonLayerId);
+    if (layer) {
+      const shape = {
+        layerId: polygonLayerId,
+        type: 'polygon',
+        color: currentColor,
+        dashed: isDashed,
+        lineWidth: currentLineWidth,
+        filled: isFilled,
+        fillOpacity: fillOpacity,
+        points: imagePolygonPoints.map(pt => ({ x: pt.x, y: pt.y }))
+      };
+      drawingShapes.push(shape);
+    }
     imagePolygonPoints = [];
+    polygonLayerId = null;
     redrawAllLayers();
   }
 });
@@ -355,11 +398,17 @@ function clearAll() {
   // Clear all sticky notes
   const notesToDelete = [...stickyNotes];
   notesToDelete.forEach(note => deleteStickyNote(note.id));
-  
+
   // Clear shapes
   drawingShapes = [];
   redrawAllLayers();
-  
+
+  imagePolygonPoints = [];
+  polygonLayerId = null;
+  imageDrawing = false;
+  activeDrawingLayerId = null;
+  imageStartLocal = null;
+
   if (currentView === '3d') {
     view3DShapes = [];
     redraw3DCanvas();
