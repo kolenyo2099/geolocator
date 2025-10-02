@@ -516,13 +516,54 @@ window.addEventListener('resize', () => {
   if (mapMode === 'draw') resizeMapCanvas();
 });
 
+map.on('move', () => {
+  if (mapMode === 'draw') redrawMapCanvas();
+});
+
+map.on('zoom', () => {
+  if (mapMode === 'draw') redrawMapCanvas();
+});
+
 let mapDrawing = false;
-let mapStartX, mapStartY;
+let mapStartLatLng = null;
 let mapPolygonPoints = [];
+
+function canvasPointToLatLng(x, y) {
+  const latLng = map.containerPointToLatLng(L.point(x, y));
+  return { lat: latLng.lat, lng: latLng.lng };
+}
+
+function latLngToCanvasPoint(latLng) {
+  const point = map.latLngToContainerPoint(L.latLng(latLng.lat, latLng.lng));
+  return { x: point.x, y: point.y };
+}
+
+function mapShapeToCanvasShape(shape) {
+  if (shape.type === 'polygon' && Array.isArray(shape.points)) {
+    return {
+      ...shape,
+      points: shape.points.map(pt => latLngToCanvasPoint(pt))
+    };
+  }
+
+  if (shape.startLatLng && shape.endLatLng) {
+    const startPoint = latLngToCanvasPoint(shape.startLatLng);
+    const endPoint = latLngToCanvasPoint(shape.endLatLng);
+    return {
+      ...shape,
+      startX: startPoint.x,
+      startY: startPoint.y,
+      endX: endPoint.x,
+      endY: endPoint.y
+    };
+  }
+
+  return shape;
+}
 
 mapCanvas.addEventListener('mousedown', (e) => {
   if (mapMode !== 'draw') return;
-  
+
   // Handle sticky note placement
   if (currentTool === 'note') {
     const rect = mapCanvas.getBoundingClientRect();
@@ -535,54 +576,60 @@ mapCanvas.addEventListener('mousedown', (e) => {
   const rect = mapCanvas.getBoundingClientRect();
   const x = e.clientX - rect.left;
   const y = e.clientY - rect.top;
-  
+  const latLng = canvasPointToLatLng(x, y);
+
   if (currentTool === 'polygon') {
-    mapPolygonPoints.push({ x, y });
+    mapPolygonPoints.push({ lat: latLng.lat, lng: latLng.lng });
     redrawMapCanvas();
-    
+
+    const point = latLngToCanvasPoint({ lat: latLng.lat, lng: latLng.lng });
     mapCanvasCtx.fillStyle = currentColor;
     mapCanvasCtx.beginPath();
-    mapCanvasCtx.arc(x, y, 4, 0, 2 * Math.PI);
+    mapCanvasCtx.arc(point.x, point.y, 4, 0, 2 * Math.PI);
     mapCanvasCtx.fill();
-    
+
     return;
   }
-  
+
   mapDrawing = true;
-  mapStartX = x;
-  mapStartY = y;
+  mapStartLatLng = { lat: latLng.lat, lng: latLng.lng };
 });
 
 mapCanvas.addEventListener('mousemove', (e) => {
   if (!mapDrawing || mapMode !== 'draw') return;
-  
+
   const rect = mapCanvas.getBoundingClientRect();
   const x = e.clientX - rect.left;
   const y = e.clientY - rect.top;
-  
+  const latLng = canvasPointToLatLng(x, y);
+
   redrawMapCanvas();
-  
-  const previewShape = {
+
+  if (!mapStartLatLng) return;
+
+  const previewShape = mapShapeToCanvasShape({
     type: currentTool,
     color: currentColor,
     dashed: isDashed,
     lineWidth: currentLineWidth,
     filled: isFilled,
     fillOpacity: fillOpacity,
-    startX: mapStartX, startY: mapStartY,
-    endX: x, endY: y
-  };
-  
+    startLatLng: mapStartLatLng,
+    endLatLng: { lat: latLng.lat, lng: latLng.lng }
+  });
+
   drawShapeOnContext(mapCanvasCtx, previewShape);
 });
 
 mapCanvas.addEventListener('mouseup', (e) => {
   if (!mapDrawing || mapMode !== 'draw') return;
-  
+
   const rect = mapCanvas.getBoundingClientRect();
   const x = e.clientX - rect.left;
   const y = e.clientY - rect.top;
-  
+
+  const endLatLng = canvasPointToLatLng(x, y);
+
   const shape = {
     type: currentTool,
     color: currentColor,
@@ -590,12 +637,13 @@ mapCanvas.addEventListener('mouseup', (e) => {
     lineWidth: currentLineWidth,
     filled: isFilled,
     fillOpacity: fillOpacity,
-    startX: mapStartX, startY: mapStartY,
-    endX: x, endY: y
+    startLatLng: { ...mapStartLatLng },
+    endLatLng: { lat: endLatLng.lat, lng: endLatLng.lng }
   };
-  
+
   mapShapes.push(shape);
   mapDrawing = false;
+  mapStartLatLng = null;
   redrawMapCanvas();
 });
 
@@ -608,7 +656,7 @@ mapCanvas.addEventListener('dblclick', (e) => {
       lineWidth: currentLineWidth,
       filled: isFilled,
       fillOpacity: fillOpacity,
-      points: [...mapPolygonPoints]
+      points: mapPolygonPoints.map(pt => ({ lat: pt.lat, lng: pt.lng }))
     };
     mapShapes.push(shape);
     mapPolygonPoints = [];
@@ -619,8 +667,19 @@ mapCanvas.addEventListener('dblclick', (e) => {
 function redrawMapCanvas() {
   mapCanvasCtx.clearRect(0, 0, mapCanvas.width, mapCanvas.height);
   mapShapes.forEach(shape => {
-    drawShapeOnContext(mapCanvasCtx, shape);
+    const canvasShape = mapShapeToCanvasShape(shape);
+    drawShapeOnContext(mapCanvasCtx, canvasShape);
   });
+
+  if (mapMode === 'draw' && currentTool === 'polygon' && mapPolygonPoints.length > 0) {
+    mapCanvasCtx.fillStyle = currentColor;
+    mapPolygonPoints.forEach(pt => {
+      const canvasPoint = latLngToCanvasPoint(pt);
+      mapCanvasCtx.beginPath();
+      mapCanvasCtx.arc(canvasPoint.x, canvasPoint.y, 4, 0, 2 * Math.PI);
+      mapCanvasCtx.fill();
+    });
+  }
 }
 
 const cluster = L.markerClusterGroup({
