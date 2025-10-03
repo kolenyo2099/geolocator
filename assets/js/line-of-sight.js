@@ -498,122 +498,12 @@ async function initialize3DView() {
   window.map3D.addControl(new mapboxgl.NavigationControl());
 }
 
-const view3DCanvas = document.getElementById('view3DCanvas');
-const view3DCanvasCtx = view3DCanvas.getContext('2d');
-let view3DShapes = [];
-let view3DDrawing = false;
-let view3DStartX, view3DStartY;
-let view3DPolygonPoints = [];
-
 function setup3DViewCanvas() {
-  const container = document.getElementById('view3DContainer');
-  view3DCanvas.width = container.offsetWidth;
-  view3DCanvas.height = container.offsetHeight;
-  redraw3DCanvas();
+  if (typeof drawingRouter !== 'undefined') {
+    const panel = drawingRouter.konvaManager.getPanel('view3d');
+    if (panel) panel.resize();
+  }
 }
-
-function redraw3DCanvas() {
-  view3DCanvasCtx.clearRect(0, 0, view3DCanvas.width, view3DCanvas.height);
-  view3DShapes.forEach(shape => {
-    drawShapeOnContext(view3DCanvasCtx, shape);
-  });
-}
-
-view3DCanvas.addEventListener('mousedown', (e) => {
-  if (currentView !== '3d' || mapMode !== 'draw') return;
-  
-  // Handle sticky note placement
-  if (currentTool === 'note') {
-    const rect = view3DCanvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    createStickyNote(x, y, document.getElementById('view3DContainer'));
-    return;
-  }
-  
-  const rect = view3DCanvas.getBoundingClientRect();
-  const x = e.clientX - rect.left;
-  const y = e.clientY - rect.top;
-  
-  if (currentTool === 'polygon') {
-    view3DPolygonPoints.push({ x, y });
-    redraw3DCanvas();
-    
-    view3DCanvasCtx.fillStyle = currentColor;
-    view3DCanvasCtx.beginPath();
-    view3DCanvasCtx.arc(x, y, 4, 0, 2 * Math.PI);
-    view3DCanvasCtx.fill();
-    
-    return;
-  }
-  
-  view3DDrawing = true;
-  view3DStartX = x;
-  view3DStartY = y;
-});
-
-view3DCanvas.addEventListener('mousemove', (e) => {
-  if (!view3DDrawing || currentView !== '3d') return;
-  
-  const rect = view3DCanvas.getBoundingClientRect();
-  const x = e.clientX - rect.left;
-  const y = e.clientY - rect.top;
-  
-  redraw3DCanvas();
-  
-  const previewShape = {
-    type: currentTool,
-    color: currentColor,
-    dashed: isDashed,
-    lineWidth: currentLineWidth,
-    filled: isFilled,
-    fillOpacity: fillOpacity,
-    startX: view3DStartX, startY: view3DStartY,
-    endX: x, endY: y
-  };
-  
-  drawShapeOnContext(view3DCanvasCtx, previewShape);
-});
-
-view3DCanvas.addEventListener('mouseup', (e) => {
-  if (!view3DDrawing || currentView !== '3d') return;
-  
-  const rect = view3DCanvas.getBoundingClientRect();
-  const x = e.clientX - rect.left;
-  const y = e.clientY - rect.top;
-  
-  const shape = {
-    type: currentTool,
-    color: currentColor,
-    dashed: isDashed,
-    lineWidth: currentLineWidth,
-    filled: isFilled,
-    fillOpacity: fillOpacity,
-    startX: view3DStartX, startY: view3DStartY,
-    endX: x, endY: y
-  };
-  
-  view3DShapes.push(shape);
-  view3DDrawing = false;
-  redraw3DCanvas();
-});
-
-view3DCanvas.addEventListener('dblclick', (e) => {
-  if (currentTool === 'polygon' && view3DPolygonPoints.length > 2 && currentView === '3d') {
-    const shape = {
-      type: 'polygon',
-      color: currentColor,
-      dashed: isDashed,
-      lineWidth: currentLineWidth,
-      filled: isFilled,
-      fillOpacity: fillOpacity,
-      points: [...view3DPolygonPoints]
-    };
-    view3DShapes.push(shape);
-    view3DPolygonPoints = [];
-    redraw3DCanvas();
-  }
-});
 
 function calculateBearing(from, to) {
   const lat1 = from.lat * Math.PI / 180;

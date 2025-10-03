@@ -214,17 +214,31 @@ let currentView = '2d';
 let streetViewMarker = null;
 let mapillaryViewer = null;
 const mapCanvas = document.getElementById('mapCanvas');
-const mapCanvasCtx = mapCanvas.getContext('2d');
-let mapShapes = [];
 
 let placesMarkerVisible = false;
 let placesCircleVisible = false;
 let placesClusterAttached = true;
 let groundDetachedView = '2d';
 let groundControlsWereVisible = false;
-let drawCanvasWasActive = false;
-let draw3DCanvasWasActive = false;
 let drawDetachedView = '2d';
+
+function syncDrawingPanel() {
+  if (typeof drawingRouter === 'undefined') return;
+  if (mapMode !== 'draw') {
+    drawingRouter.setActivePanel(null);
+    return;
+  }
+
+  const panelByView = {
+    '2d': 'map',
+    '3d': 'view3d',
+    'peakfinder': 'peakfinder',
+    'streetview': 'streetview',
+    'mapillary': 'mapillary'
+  };
+  const panel = panelByView[currentView] || 'map';
+  drawingRouter.setActivePanel(panel);
+}
 
 function detachPlacesMode() {
   placesClusterAttached = map.hasLayer(cluster);
@@ -302,17 +316,7 @@ function restoreGroundMode() {
 }
 
 function detachDrawMode() {
-  drawCanvasWasActive = mapCanvas.classList.contains('active');
-  const view3DCanvas = document.getElementById('view3DCanvas');
-  draw3DCanvasWasActive = !!(view3DCanvas && view3DCanvas.classList.contains('active'));
   drawDetachedView = currentView;
-
-  if (drawCanvasWasActive) {
-    mapCanvas.classList.remove('active');
-  }
-  if (draw3DCanvasWasActive && view3DCanvas) {
-    view3DCanvas.classList.remove('active');
-  }
 
   if (currentView === '3d' || currentView === 'peakfinder') {
     toggleMapView();
@@ -321,25 +325,19 @@ function detachDrawMode() {
   if (!map.dragging._enabled) {
     map.dragging.enable();
   }
+
+  if (typeof drawingRouter !== 'undefined') {
+    drawingRouter.setActivePanel(null);
+  }
 }
 
 function restoreDrawMode() {
-  const view3DCanvas = document.getElementById('view3DCanvas');
-
   if (drawDetachedView !== '2d' && currentView === '2d') {
     toggleMapView();
-  } else if (currentView === '2d' && drawCanvasWasActive) {
-    mapCanvas.classList.add('active');
-    map.dragging.disable();
-    resizeMapCanvas();
-  } else if (currentView === '3d' && view3DCanvas && draw3DCanvasWasActive) {
-    view3DCanvas.classList.add('active');
-    setup3DViewCanvas();
   }
 
-  drawCanvasWasActive = false;
-  draw3DCanvasWasActive = false;
   drawDetachedView = '2d';
+  syncDrawingPanel();
 }
 
 function detachModeResources(mode) {
@@ -389,7 +387,6 @@ function setMapMode(mode) {
   document.getElementById('anglesControls').style.display = mode === 'angles' ? 'block' : 'none';
   document.getElementById('losControls').style.display = mode === 'los' ? 'block' : 'none';
 
-  mapCanvas.classList.remove('active');
   map.dragging.enable();
 
   const view3DCanvas = document.getElementById('view3DCanvas');
@@ -410,17 +407,13 @@ function setMapMode(mode) {
     document.getElementById('status').textContent = 'Drawing mode active!';
 
     if (currentView === '2d') {
-      mapCanvas.classList.add('active');
       map.dragging.disable();
-      resizeMapCanvas();
     } else if (currentView === '3d') {
       view3DCanvas.classList.add('active');
       setup3DViewCanvas();
     } else {
       if (typeof backToMap === 'function') backToMap();
-      mapCanvas.classList.add('active');
       map.dragging.disable();
-      resizeMapCanvas();
     }
   } else if (mode === 'los') {
     document.getElementById('status').textContent = 'Click point A (observer)';
@@ -438,6 +431,7 @@ function setMapMode(mode) {
   }
 
   restoreModeResources(mode);
+  syncDrawingPanel();
 }
 
 function toggleMapView() {
@@ -464,7 +458,6 @@ function toggleMapView() {
     
     map2D.style.display = 'none';
     mapCanvas2D.style.display = 'none';
-    mapCanvas2D.classList.remove('active');
     map.dragging.enable();
     
     toggleBtn.style.display = 'flex';
@@ -488,198 +481,17 @@ function toggleMapView() {
     view3DCanvasEl.classList.remove('active');
     toggleBtn.style.display = 'none';
     infoBar.classList.remove('visible');
-    
+
     if (mapMode === 'draw') {
-      mapCanvas2D.classList.add('active');
       map.dragging.disable();
     }
-    
+
     setTimeout(() => {
       map.invalidateSize();
-      if (mapMode === 'draw') resizeMapCanvas();
     }, 100);
   }
-}
 
-function resizeMapCanvas() {
-  const mapContainer = document.getElementById('map');
-  mapCanvas.width = mapContainer.offsetWidth;
-  mapCanvas.height = mapContainer.offsetHeight;
-  redrawMapCanvas();
-}
-
-map.on('resize', () => {
-  if (mapMode === 'draw') resizeMapCanvas();
-});
-
-window.addEventListener('resize', () => {
-  if (mapMode === 'draw') resizeMapCanvas();
-});
-
-map.on('move', () => {
-  if (mapMode === 'draw') redrawMapCanvas();
-});
-
-map.on('zoom', () => {
-  if (mapMode === 'draw') redrawMapCanvas();
-});
-
-let mapDrawing = false;
-let mapStartLatLng = null;
-let mapPolygonPoints = [];
-
-function canvasPointToLatLng(x, y) {
-  const latLng = map.containerPointToLatLng(L.point(x, y));
-  return { lat: latLng.lat, lng: latLng.lng };
-}
-
-function latLngToCanvasPoint(latLng) {
-  const point = map.latLngToContainerPoint(L.latLng(latLng.lat, latLng.lng));
-  return { x: point.x, y: point.y };
-}
-
-function mapShapeToCanvasShape(shape) {
-  if (shape.type === 'polygon' && Array.isArray(shape.points)) {
-    return {
-      ...shape,
-      points: shape.points.map(pt => latLngToCanvasPoint(pt))
-    };
-  }
-
-  if (shape.startLatLng && shape.endLatLng) {
-    const startPoint = latLngToCanvasPoint(shape.startLatLng);
-    const endPoint = latLngToCanvasPoint(shape.endLatLng);
-    return {
-      ...shape,
-      startX: startPoint.x,
-      startY: startPoint.y,
-      endX: endPoint.x,
-      endY: endPoint.y
-    };
-  }
-
-  return shape;
-}
-
-mapCanvas.addEventListener('mousedown', (e) => {
-  if (mapMode !== 'draw') return;
-
-  // Handle sticky note placement
-  if (currentTool === 'note') {
-    const rect = mapCanvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    createStickyNote(x, y, document.getElementById('map'));
-    return;
-  }
-  
-  const rect = mapCanvas.getBoundingClientRect();
-  const x = e.clientX - rect.left;
-  const y = e.clientY - rect.top;
-  const latLng = canvasPointToLatLng(x, y);
-
-  if (currentTool === 'polygon') {
-    mapPolygonPoints.push({ lat: latLng.lat, lng: latLng.lng });
-    redrawMapCanvas();
-
-    const point = latLngToCanvasPoint({ lat: latLng.lat, lng: latLng.lng });
-    mapCanvasCtx.fillStyle = currentColor;
-    mapCanvasCtx.beginPath();
-    mapCanvasCtx.arc(point.x, point.y, 4, 0, 2 * Math.PI);
-    mapCanvasCtx.fill();
-
-    return;
-  }
-
-  mapDrawing = true;
-  mapStartLatLng = { lat: latLng.lat, lng: latLng.lng };
-});
-
-mapCanvas.addEventListener('mousemove', (e) => {
-  if (!mapDrawing || mapMode !== 'draw') return;
-
-  const rect = mapCanvas.getBoundingClientRect();
-  const x = e.clientX - rect.left;
-  const y = e.clientY - rect.top;
-  const latLng = canvasPointToLatLng(x, y);
-
-  redrawMapCanvas();
-
-  if (!mapStartLatLng) return;
-
-  const previewShape = mapShapeToCanvasShape({
-    type: currentTool,
-    color: currentColor,
-    dashed: isDashed,
-    lineWidth: currentLineWidth,
-    filled: isFilled,
-    fillOpacity: fillOpacity,
-    startLatLng: mapStartLatLng,
-    endLatLng: { lat: latLng.lat, lng: latLng.lng }
-  });
-
-  drawShapeOnContext(mapCanvasCtx, previewShape);
-});
-
-mapCanvas.addEventListener('mouseup', (e) => {
-  if (!mapDrawing || mapMode !== 'draw') return;
-
-  const rect = mapCanvas.getBoundingClientRect();
-  const x = e.clientX - rect.left;
-  const y = e.clientY - rect.top;
-
-  const endLatLng = canvasPointToLatLng(x, y);
-
-  const shape = {
-    type: currentTool,
-    color: currentColor,
-    dashed: isDashed,
-    lineWidth: currentLineWidth,
-    filled: isFilled,
-    fillOpacity: fillOpacity,
-    startLatLng: { ...mapStartLatLng },
-    endLatLng: { lat: endLatLng.lat, lng: endLatLng.lng }
-  };
-
-  mapShapes.push(shape);
-  mapDrawing = false;
-  mapStartLatLng = null;
-  redrawMapCanvas();
-});
-
-mapCanvas.addEventListener('dblclick', (e) => {
-  if (currentTool === 'polygon' && mapPolygonPoints.length > 2 && mapMode === 'draw') {
-    const shape = {
-      type: 'polygon',
-      color: currentColor,
-      dashed: isDashed,
-      lineWidth: currentLineWidth,
-      filled: isFilled,
-      fillOpacity: fillOpacity,
-      points: mapPolygonPoints.map(pt => ({ lat: pt.lat, lng: pt.lng }))
-    };
-    mapShapes.push(shape);
-    mapPolygonPoints = [];
-    redrawMapCanvas();
-  }
-});
-
-function redrawMapCanvas() {
-  mapCanvasCtx.clearRect(0, 0, mapCanvas.width, mapCanvas.height);
-  mapShapes.forEach(shape => {
-    const canvasShape = mapShapeToCanvasShape(shape);
-    drawShapeOnContext(mapCanvasCtx, canvasShape);
-  });
-
-  if (mapMode === 'draw' && currentTool === 'polygon' && mapPolygonPoints.length > 0) {
-    mapCanvasCtx.fillStyle = currentColor;
-    mapPolygonPoints.forEach(pt => {
-      const canvasPoint = latLngToCanvasPoint(pt);
-      mapCanvasCtx.beginPath();
-      mapCanvasCtx.arc(canvasPoint.x, canvasPoint.y, 4, 0, 2 * Math.PI);
-      mapCanvasCtx.fill();
-    });
-  }
+  syncDrawingPanel();
 }
 
 const cluster = L.markerClusterGroup({
