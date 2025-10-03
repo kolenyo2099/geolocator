@@ -228,27 +228,13 @@ function handleLOSClick(latlng) {
   if (!losPointA) {
     losPointA = latlng;
     losMarkerA = L.marker(latlng, {
-      icon: L.icon({
-        iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
-        shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
-        iconSize: [25, 41],
-        iconAnchor: [12, 41],
-        popupAnchor: [1, -34],
-        shadowSize: [41, 41]
-      })
+      icon: LeafletIconAssets.createIcon('green')
     }).addTo(map).bindPopup('Point A (Observer)').openPopup();
     updateLOSStatus();
   } else if (!losPointB) {
     losPointB = latlng;
     losMarkerB = L.marker(latlng, {
-      icon: L.icon({
-        iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png',
-        shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
-        iconSize: [25, 41],
-        iconAnchor: [12, 41],
-        popupAnchor: [1, -34],
-        shadowSize: [41, 41]
-      })
+      icon: LeafletIconAssets.createIcon('blue')
     }).addTo(map).bindPopup('Point B (Target)').openPopup();
     
     losLine = L.polyline([losPointA, losPointB], {
