@@ -726,13 +726,15 @@ class KonvaManager {
       const panel = new KonvaPanel(def.key, container, this.router, { forwardTarget });
       this.panels.set(def.key, panel);
 
-      container.addEventListener('mousedown', () => {
+      const focusHandler = () => {
         if (def.key === 'map-overlay') {
-          this.router.setActivePanel('map-overlay');
+          this.router.focusMapPanel();
         } else {
           this.router.setActivePanel(def.key);
         }
-      });
+      };
+
+      container.addEventListener('pointerdown', focusHandler);
     });
 
     window.addEventListener('resize', () => {
@@ -750,7 +752,10 @@ class KonvaManager {
 
   updatePointerBehavior(tool) {
     this.panels.forEach((panel, panelKey) => {
-      const shouldEnable = this.activePanel && panelKey === this.activePanel;
+      let shouldEnable = this.activePanel && panelKey === this.activePanel;
+      if (panelKey === 'map-overlay' && this.router && this.router.usesGeoman(tool)) {
+        shouldEnable = false;
+      }
       panel.setPointerEnabled(shouldEnable);
     });
   }
@@ -843,6 +848,10 @@ class DrawingRouter {
   }
 
   setActivePanel(panelKey) {
+    if (panelKey === 'map-overlay' && this.usesGeoman()) {
+      panelKey = 'map';
+    }
+
     this.activePanel = panelKey;
     if (panelKey === 'map') {
       this.konvaManager.setActivePanel(null);
@@ -854,6 +863,18 @@ class DrawingRouter {
       }
     }
     this.konvaManager.updatePointerBehavior(this.state.tool);
+  }
+
+  usesGeoman(tool = this.state.tool) {
+    return ['rect', 'polygon', 'circle', 'line', 'freehand'].includes(tool);
+  }
+
+  desiredMapPanel(tool = this.state.tool) {
+    return this.usesGeoman(tool) ? 'map' : 'map-overlay';
+  }
+
+  focusMapPanel() {
+    this.setActivePanel(this.desiredMapPanel());
   }
 
   enableGeomanForCurrentTool() {
@@ -919,8 +940,13 @@ class DrawingRouter {
 
   selectTool(tool) {
     this.state.tool = tool;
-    if (this.activePanel === 'map') {
-      this.enableGeomanForCurrentTool();
+    if (this.activePanel === 'map' || this.activePanel === 'map-overlay') {
+      const desiredPanel = this.desiredMapPanel(tool);
+      if (desiredPanel !== this.activePanel) {
+        this.setActivePanel(desiredPanel);
+      } else if (desiredPanel === 'map') {
+        this.enableGeomanForCurrentTool();
+      }
     }
     this.updateToolbarUI();
     this.konvaManager.updatePointerBehavior(tool);
