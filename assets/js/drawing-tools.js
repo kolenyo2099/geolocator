@@ -645,7 +645,21 @@ class KonvaPanel {
     let endX = pos.x;
     let endY = pos.y;
     if (this.router && typeof this.router.isShiftPressed === 'function' && this.router.isShiftPressed()) {
-      endY = points[1];
+      const startX = points[0];
+      const startY = points[1];
+      const dx = pos.x - startX;
+      const dy = pos.y - startY;
+      const length = Math.hypot(dx, dy);
+      if (length > 0) {
+        const angleDeg = (Math.atan2(dy, dx) * 180) / Math.PI;
+        const snappedDeg = Math.round(angleDeg / 45) * 45; // snap to 45° increments
+        const snappedRad = (snappedDeg * Math.PI) / 180;
+        endX = startX + Math.cos(snappedRad) * length;
+        endY = startY + Math.sin(snappedRad) * length;
+      } else {
+        endX = startX;
+        endY = startY;
+      }
     }
     points[2] = endX;
     points[3] = endY;
