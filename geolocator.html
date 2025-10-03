@@ -6,44 +6,50 @@
   <title>Geolocation Verification Tool</title>
 
   <!-- Leaflet core with rotation support -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
-  
+  <link rel="stylesheet" href="assets/vendor/leaflet/leaflet.css"/>
+  <script src="assets/vendor/leaflet/leaflet.js"></script>
+
   <!-- Leaflet Rotation Plugin -->
-  <script src="https://unpkg.com/leaflet-rotate@0.2.8/dist/leaflet-rotate-src.js"></script>
+  <script src="assets/vendor/leaflet-rotate/leaflet-rotate-src.js"></script>
 
   <!-- Leaflet Geoman for drawing -->
-  <link rel="stylesheet" href="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.14.2/dist/leaflet-geoman.css"/>
-  <script src="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.14.2/dist/leaflet-geoman.min.js"></script>
+  <link rel="stylesheet" href="assets/vendor/leaflet-geoman/leaflet-geoman.css"/>
+  <script src="assets/vendor/leaflet-geoman/leaflet-geoman.min.js"></script>
 
   <!-- Turf.js for angle calculations -->
-  <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+  <script src="assets/vendor/turf/turf.min.js"></script>
 
   <!-- Leaflet Geocoder -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.css"/>
-  <script src="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.js"></script>
+  <link rel="stylesheet" href="assets/vendor/leaflet-control-geocoder/Control.Geocoder.css"/>
+  <script src="assets/vendor/leaflet-control-geocoder/Control.Geocoder.js"></script>
 
   <!-- MarkerCluster -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css"/>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css"/>
-  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+  <link rel="stylesheet" href="assets/vendor/leaflet-markercluster/MarkerCluster.css"/>
+  <link rel="stylesheet" href="assets/vendor/leaflet-markercluster/MarkerCluster.Default.css"/>
+  <script src="assets/vendor/leaflet-markercluster/leaflet.markercluster.js"></script>
 
   <!-- Mapbox GL JS for 3D terrain view -->
-  <link href='https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css' rel='stylesheet' />
-  <script src='https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js'></script>
+  <link href='assets/vendor/mapbox-gl/mapbox-gl.css' rel='stylesheet' />
+  <script src='assets/vendor/mapbox-gl/mapbox-gl.js'></script>
+  <script>
+    if (window.mapboxgl) {
+      mapboxgl.workerUrl = 'assets/vendor/mapbox-gl/mapbox-gl-csp-worker.js';
+    }
+  </script>
 
   <!-- PeakFinder API -->
   <script async type="text/javascript" src="https://www.peakfinder.com/script/peakfinder.1.0.min.js"></script>
 
   <!-- Konva for scene-graph overlays -->
-  <script src="https://unpkg.com/konva@9/konva.min.js"></script>
+  <script src="assets/vendor/konva/konva.min.js"></script>
 
   <!-- Mapillary JS -->
-  <script src='https://unpkg.com/mapillary-js@4.1.2/dist/mapillary.js'></script>
-  <link href='https://unpkg.com/mapillary-js@4.1.2/dist/mapillary.css' rel='stylesheet' />
+  <script src='assets/vendor/mapillary/mapillary.js'></script>
+  <link href='assets/vendor/mapillary/mapillary.css' rel='stylesheet' />
 
   <link rel="stylesheet" href="assets/css/styles.css"/>
 
+  <script src="assets/js/icons.js"></script>
 </head>
 <body>
   <div class="app-container">

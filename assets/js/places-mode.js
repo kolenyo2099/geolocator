@@ -524,14 +524,7 @@ map.on('click', e => {
     if (circle) map.removeLayer(circle);
 
     pin = L.marker(e.latlng, {
-      icon: L.icon({
-        iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
-        shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
-        iconSize: [25, 41],
-        iconAnchor: [12, 41],
-        popupAnchor: [1, -34],
-        shadowSize: [41, 41]
-      })
+      icon: LeafletIconAssets.createIcon('red')
     }).addTo(map);
 
     circle = L.circle(e.latlng, {
@@ -551,14 +544,7 @@ map.on('click', e => {
     }
 
     const marker = L.marker(e.latlng, {
-      icon: L.icon({
-        iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png',
-        shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
-        iconSize: [25, 41],
-        iconAnchor: [12, 41],
-        popupAnchor: [1, -34],
-        shadowSize: [41, 41]
-      })
+      icon: LeafletIconAssets.createIcon('blue')
     }).addTo(map).bindPopup('Ground View Location').openPopup();
     
     streetViewMarker = {
@@ -665,16 +651,9 @@ function drawElements(els) {
       </a>
     `;
 
-    const markerColor = getMarkerColor(category);
+    const markerColor = getMarkerColorKey(category);
     const marker = L.marker([lat, lon], {
-      icon: L.icon({
-        iconUrl: markerColor,
-        shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
-        iconSize: [25, 41],
-        iconAnchor: [12, 41],
-        popupAnchor: [1, -34],
-        shadowSize: [41, 41]
-      })
+      icon: LeafletIconAssets.createIcon(markerColor)
     });
     
     marker.bindPopup(popupHtml, {maxWidth: 300});
@@ -697,20 +676,20 @@ function getCategory(tags) {
   return 'miscellaneous';
 }
 
-function getMarkerColor(category) {
+function getMarkerColorKey(category) {
   const colors = {
-    'amenity': 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png',
-    'shop': 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
-    'tourism': 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-orange.png',
-    'leisure': 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-yellow.png',
-    'historic': 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-violet.png',
+    'amenity': 'blue',
+    'shop': 'green',
+    'tourism': 'orange',
+    'leisure': 'yellow',
+    'historic': 'violet'
   };
-  
+
   for (const [key, color] of Object.entries(colors)) {
     if (category.startsWith(key)) return color;
   }
-  
-  return 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-grey.png';
+
+  return 'grey';
 }
 
 function escapeHtml(text) {
