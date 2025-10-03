@@ -39,7 +39,8 @@ class KonvaPanel {
     this.overlay.style.width = '100%';
     this.overlay.style.height = '100%';
     this.overlay.style.pointerEvents = 'none';
-    this.overlay.style.zIndex = '30';
+    const overlayZIndex = options.zIndex != null ? options.zIndex : 30;
+    this.overlay.style.zIndex = String(overlayZIndex);
 
     // Ensure container can host absolute overlay
     if (getComputedStyle(container).position === 'static') {
@@ -992,7 +993,7 @@ class KonvaManager {
 
   panelDefinitions() {
     return [
-      { key: 'map-overlay', selector: '#map', forwardSelector: '#mapCanvas' },
+      { key: 'map-overlay', selector: '#map', forwardSelector: '#mapCanvas', zIndex: 650 },
       { key: 'image', selector: '.image-canvas-container', forwardSelector: '#imageCanvas' },
       { key: 'view3d', selector: '#view3DContainer', forwardSelector: '#view3DCanvas' },
       { key: 'peakfinder', selector: '#peakFinderContainer', forwardSelector: '#pfcanvas' },
@@ -1006,7 +1007,10 @@ class KonvaManager {
       const container = document.querySelector(def.selector);
       if (!container) return;
       const forwardTarget = def.forwardSelector ? document.querySelector(def.forwardSelector) : container;
-      const panel = new KonvaPanel(def.key, container, this.router, { forwardTarget });
+      const panel = new KonvaPanel(def.key, container, this.router, {
+        forwardTarget,
+        zIndex: def.zIndex
+      });
       this.panels.set(def.key, panel);
 
       const focusHandler = () => {
@@ -1157,7 +1161,7 @@ class DrawingRouter {
   }
 
   usesGeoman(tool = this.state.tool) {
-    return ['rect', 'polygon', 'circle', 'line', 'freehand'].includes(tool);
+    return ['rect', 'polygon', 'circle', 'line'].includes(tool);
   }
 
   desiredMapPanel(tool = this.state.tool) {
@@ -1182,8 +1186,7 @@ class DrawingRouter {
       rect: 'Rectangle',
       polygon: 'Polygon',
       circle: 'Circle',
-      line: 'Line',
-      freehand: 'Draw'
+      line: 'Line'
     };
 
     const geomanTool = toolMap[this.state.tool];
