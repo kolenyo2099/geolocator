@@ -68,6 +68,7 @@ class KonvaPanel {
     this.layer.add(this.transformer);
 
     this.shapes = new Set();
+    this.angleMarkers = new Map();
 
     this.activeShape = null;
     this.drawingShape = null;
@@ -99,6 +100,11 @@ class KonvaPanel {
       shape.destroy();
     });
     this.shapes.clear();
+    this.angleMarkers.forEach(marker => {
+      if (marker.arc) marker.arc.destroy();
+      if (marker.label) marker.label.destroy();
+    });
+    this.angleMarkers.clear();
     this.transformer.nodes([]);
     this.pendingPolygon = null;
     this.drawingShape = null;
@@ -136,11 +142,13 @@ class KonvaPanel {
     if (shape.getAttr('shapeType') === 'arrow') {
       const update = () => {
         this.updateArrowMeasurement(shape);
+        this.updateArrowIntersections(shape);
       };
       shape.on('dragmove transform', update);
       shape.on('pointsChange strokeChange strokeWidthChange', update);
       shape.on('destroy', () => {
         this.cleanupArrowLabel(shape, true);
+        this.removeAngleMarkersForShape(shape, true);
       });
     }
 
@@ -156,6 +164,7 @@ class KonvaPanel {
         label.moveToTop();
         this.updateArrowMeasurement(shape);
       }
+      this.updateArrowIntersections(shape);
     }
     this.layer.draw();
   }
@@ -166,6 +175,7 @@ class KonvaPanel {
       this.transformer.nodes([]);
     }
     this.cleanupArrowLabel(shape);
+    this.removeAngleMarkersForShape(shape, true);
     shape.remove();
     this.layer.draw();
   }
@@ -588,6 +598,7 @@ class KonvaPanel {
     if (line.getAttr('shapeType') === 'arrow') {
       this.ensureArrowLabel(line);
       this.updateArrowMeasurement(line);
+      this.updateArrowIntersections(line);
     }
   }
 
@@ -628,6 +639,278 @@ class KonvaPanel {
     } else {
       label.remove();
     }
+  }
+
+  removeAngleMarkersForShape(shape, destroy = false) {
+    if (!shape || !this.angleMarkers.size) return;
+    const targetId = shape._id;
+    const keysToDelete = [];
+    this.angleMarkers.forEach((marker, key) => {
+      if (!marker || !key) return;
+      const [idA, idB] = key.split('|').map(Number);
+      if (idA !== targetId && idB !== targetId) return;
+      if (destroy) {
+        if (marker.arc) marker.arc.destroy();
+        if (marker.label) marker.label.destroy();
+        keysToDelete.push(key);
+      } else {
+        if (marker.arc) marker.arc.visible(false);
+        if (marker.label) marker.label.visible(false);
+      }
+    });
+    keysToDelete.forEach(key => this.angleMarkers.delete(key));
+  }
+
+  updateArrowIntersections(shape) {
+    if (!shape || shape.getAttr('shapeType') !== 'arrow') return;
+    const otherArrows = [...this.shapes].filter(other => other !== shape && other.getAttr('shapeType') === 'arrow');
+    const processed = new Set();
+
+    otherArrows.forEach(other => {
+      const key = this.angleMarkerKey(shape, other);
+      processed.add(key);
+      const geometry = this.computeArrowIntersectionGeometry(shape, other);
+      if (geometry) {
+        this.renderAngleMarker(key, shape, other, geometry);
+      } else {
+        this.hideAngleMarker(key);
+      }
+    });
+
+    this.angleMarkers.forEach((marker, key) => {
+      if (processed.has(key)) return;
+      const [idA, idB] = key.split('|').map(Number);
+      if (idA === shape._id || idB === shape._id) {
+        this.hideAngleMarker(key);
+      }
+    });
+
+    this.layer.batchDraw();
+  }
+
+  angleMarkerKey(a, b) {
+    const ids = [a._id, b._id].sort((x, y) => x - y);
+    return ids.join('|');
+  }
+
+  computeArrowIntersectionGeometry(shapeA, shapeB) {
+    const segA = this.getArrowSegment(shapeA);
+    const segB = this.getArrowSegment(shapeB);
+    if (!segA || !segB) return null;
+
+    const intersection = this.findSegmentIntersection(segA, segB);
+    if (!intersection) return null;
+
+    const dirA = this.directionFromIntersection(segA, intersection);
+    const dirB = this.directionFromIntersection(segB, intersection);
+    if (!dirA || !dirB) return null;
+
+    const dot = dirA.x * dirB.x + dirA.y * dirB.y;
+    const angleRad = Math.acos(Math.max(-1, Math.min(1, dot)));
+    const angleDeg = angleRad * (180 / Math.PI);
+    if (!Number.isFinite(angleDeg) || angleDeg < 0.5) {
+      return null;
+    }
+
+    const angle1 = this.vectorAngle(dirA);
+    const angle2 = this.vectorAngle(dirB);
+    let delta = angle2 - angle1;
+    delta = ((delta % 360) + 360) % 360;
+    let sweep;
+    let rotation;
+    if (delta <= 180) {
+      sweep = delta;
+      rotation = angle1;
+    } else {
+      sweep = 360 - delta;
+      rotation = angle2;
+    }
+    rotation = ((rotation % 360) + 360) % 360;
+    const midAngle = rotation + sweep / 2;
+
+    return {
+      point: intersection,
+      angle: angleDeg,
+      rotation,
+      sweep,
+      midAngle
+    };
+  }
+
+  getArrowSegment(shape) {
+    if (!shape || shape.getAttr('shapeType') !== 'arrow') return null;
+    const points = shape.points();
+    if (!points || points.length < 4) return null;
+    const transform = shape.getAbsoluteTransform().copy();
+    const start = transform.point({ x: points[0], y: points[1] });
+    const end = transform.point({ x: points[points.length - 2], y: points[points.length - 1] });
+    return { start, end };
+  }
+
+  directionFromIntersection(segment, intersection) {
+    if (!segment || !intersection) return null;
+    const toEnd = { x: segment.end.x - intersection.x, y: segment.end.y - intersection.y };
+    const toStart = { x: segment.start.x - intersection.x, y: segment.start.y - intersection.y };
+    const vec = this.pickLongerVector(toEnd, toStart);
+    const len = Math.hypot(vec.x, vec.y);
+    if (!len) return null;
+    return { x: vec.x / len, y: vec.y / len };
+  }
+
+  pickLongerVector(v1, v2) {
+    const len1 = Math.hypot(v1.x, v1.y);
+    const len2 = Math.hypot(v2.x, v2.y);
+    return len1 >= len2 ? v1 : v2;
+  }
+
+  findSegmentIntersection(segA, segB) {
+    const EPS = 1e-6;
+    const { start: a1, end: a2 } = segA;
+    const { start: b1, end: b2 } = segB;
+
+    const shared = this.findSharedEndpoint(a1, a2, b1, b2, EPS);
+    if (shared) return shared;
+
+    const x1 = a1.x;
+    const y1 = a1.y;
+    const x2 = a2.x;
+    const y2 = a2.y;
+    const x3 = b1.x;
+    const y3 = b1.y;
+    const x4 = b2.x;
+    const y4 = b2.y;
+
+    const denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
+    if (Math.abs(denom) < EPS) {
+      return null;
+    }
+
+    const pre = x1 * y2 - y1 * x2;
+    const post = x3 * y4 - y3 * x4;
+    const x = (pre * (x3 - x4) - (x1 - x2) * post) / denom;
+    const y = (pre * (y3 - y4) - (y1 - y2) * post) / denom;
+
+    if (!this.pointOnSegment({ x, y }, a1, a2, EPS) || !this.pointOnSegment({ x, y }, b1, b2, EPS)) {
+      return null;
+    }
+
+    return { x, y };
+  }
+
+  findSharedEndpoint(a1, a2, b1, b2, tolerance) {
+    const pairs = [
+      [a1, b1],
+      [a1, b2],
+      [a2, b1],
+      [a2, b2]
+    ];
+    for (const [p, q] of pairs) {
+      if (this.distance(p, q) <= tolerance) {
+        return {
+          x: (p.x + q.x) / 2,
+          y: (p.y + q.y) / 2
+        };
+      }
+    }
+    return null;
+  }
+
+  pointOnSegment(point, segStart, segEnd, tolerance) {
+    const minX = Math.min(segStart.x, segEnd.x) - tolerance;
+    const maxX = Math.max(segStart.x, segEnd.x) + tolerance;
+    const minY = Math.min(segStart.y, segEnd.y) - tolerance;
+    const maxY = Math.max(segStart.y, segEnd.y) + tolerance;
+    if (point.x < minX || point.x > maxX || point.y < minY || point.y > maxY) {
+      return false;
+    }
+    const cross = (segEnd.x - segStart.x) * (point.y - segStart.y) - (segEnd.y - segStart.y) * (point.x - segStart.x);
+    return Math.abs(cross) <= tolerance * Math.hypot(segEnd.x - segStart.x, segEnd.y - segStart.y);
+  }
+
+  distance(p, q) {
+    return Math.hypot(p.x - q.x, p.y - q.y);
+  }
+
+  vectorAngle(vec) {
+    return (Math.atan2(vec.y, vec.x) * 180) / Math.PI;
+  }
+
+  ensureAngleMarker(key, color) {
+    let marker = this.angleMarkers.get(key);
+    if (!marker) {
+      const arc = new Konva.Arc({
+        x: 0,
+        y: 0,
+        innerRadius: 16,
+        outerRadius: 22,
+        angle: 0,
+        rotation: 0,
+        stroke: color,
+        strokeWidth: 2,
+        listening: false,
+        fill: 'rgba(0,0,0,0)',
+        name: 'arrow-angle-arc'
+      });
+      const label = new Konva.Text({
+        text: '',
+        fontSize: 12,
+        fontFamily: 'Inter, Arial, sans-serif',
+        fill: color,
+        align: 'center',
+        listening: false,
+        name: 'arrow-angle-label',
+        visible: false
+      });
+      this.layer.add(arc);
+      this.layer.add(label);
+      marker = { arc, label };
+      this.angleMarkers.set(key, marker);
+    }
+    return marker;
+  }
+
+  renderAngleMarker(key, shapeA, _shapeB, geometry) {
+    const color = shapeA.stroke() || '#FF4444';
+    const marker = this.ensureAngleMarker(key, color);
+    const arc = marker.arc;
+    const label = marker.label;
+    if (!arc || !label) return;
+
+    arc.stroke(color);
+    arc.position({ x: geometry.point.x, y: geometry.point.y });
+    arc.rotation(geometry.rotation);
+    arc.angle(geometry.sweep);
+    arc.visible(true);
+
+    const labelRadius = arc.outerRadius() + 12;
+    const midRad = (geometry.midAngle * Math.PI) / 180;
+    const text = this.formatAngleText(geometry.angle);
+    const labelPos = {
+      x: geometry.point.x + Math.cos(midRad) * labelRadius,
+      y: geometry.point.y + Math.sin(midRad) * labelRadius
+    };
+
+    label.text(text);
+    label.fill(color);
+    label.position(labelPos);
+    label.offset({ x: label.width() / 2, y: label.height() / 2 });
+    label.visible(true);
+
+    arc.moveToTop();
+    label.moveToTop();
+  }
+
+  hideAngleMarker(key) {
+    const marker = this.angleMarkers.get(key);
+    if (!marker) return;
+    if (marker.arc) marker.arc.visible(false);
+    if (marker.label) marker.label.visible(false);
+  }
+
+  formatAngleText(angle) {
+    if (!Number.isFinite(angle)) return '';
+    const rounded = Math.round(angle * 10) / 10;
+    return `${rounded % 1 === 0 ? Math.round(rounded) : rounded.toFixed(1)}°`;
   }
 
   updateArrowMeasurement(shape) {
@@ -909,6 +1192,12 @@ class DrawingRouter {
       return;
     }
 
+    if (!this.ensureGeomanDrawHandler(geomanTool)) {
+      console.warn(`Geoman draw handler for ${geomanTool} is unavailable.`);
+      this.map.pm.disableDraw();
+      return;
+    }
+
     this.map.pm.disableDraw();
     this.map.pm.setPathOptions(this.geomanOptions());
     this.map.pm.enableDraw(geomanTool, {
@@ -916,6 +1205,17 @@ class DrawingRouter {
       snappable: true,
       snapDistance: 20
     });
+  }
+
+  ensureGeomanDrawHandler(tool) {
+    if (!this.map || !this.map.pm) return false;
+    if (this.map.pm.Draw && this.map.pm.Draw[tool]) return true;
+    if (!window.L || !L.PM || !L.PM.Draw || !L.PM.Draw[tool]) {
+      return false;
+    }
+    this.map.pm.Draw = this.map.pm.Draw || {};
+    this.map.pm.Draw[tool] = new L.PM.Draw[tool](this.map);
+    return !!this.map.pm.Draw[tool];
   }
 
   applyGeomanStyle(layer) {
