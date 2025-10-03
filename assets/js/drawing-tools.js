@@ -852,6 +852,14 @@ class DrawingRouter {
       panelKey = 'map';
     }
 
+    if (panelKey === this.activePanel) {
+      if (panelKey === 'map') {
+        this.enableGeomanForCurrentTool();
+      }
+      this.konvaManager.updatePointerBehavior(this.state.tool);
+      return;
+    }
+
     this.activePanel = panelKey;
     if (panelKey === 'map') {
       this.konvaManager.setActivePanel(null);
@@ -874,7 +882,9 @@ class DrawingRouter {
   }
 
   focusMapPanel() {
-    this.setActivePanel(this.desiredMapPanel());
+    const desired = this.desiredMapPanel();
+    if (this.activePanel === desired) return;
+    this.setActivePanel(desired);
   }
 
   enableGeomanForCurrentTool() {
@@ -1058,6 +1068,7 @@ document.addEventListener('DOMContentLoaded', () => {
   selectColor(DRAWING_DEFAULTS.color);
   updateFillOpacity(DRAWING_DEFAULTS.fillOpacity * 100);
   selectLineWidth(DRAWING_DEFAULTS.lineWidth);
+  resizeMapCanvas();
 });
 
 /* ========== Toolbar Helpers ========== */
@@ -1121,6 +1132,33 @@ function clearAll() {
   drawingRouter.clearAllShapes();
 }
 
+function resizeMapCanvas() {
+  const mapElement = document.getElementById('map');
+  const canvas = document.getElementById('mapCanvas');
+  if (!mapElement || !canvas) return;
+
+  const width = mapElement.clientWidth;
+  const height = mapElement.clientHeight;
+  if (!width || !height) return;
+
+  if (canvas.width !== width) {
+    canvas.width = width;
+  }
+  if (canvas.height !== height) {
+    canvas.height = height;
+  }
+
+  canvas.style.width = `${width}px`;
+  canvas.style.height = `${height}px`;
+
+  if (window.drawingRouter && drawingRouter.konvaManager) {
+    const panel = drawingRouter.konvaManager.getPanel('map-overlay');
+    if (panel && typeof panel.resize === 'function') {
+      panel.resize();
+    }
+  }
+}
+
 window.selectTool = selectTool;
 window.selectColor = selectColor;
 window.toggleLineStyle = toggleLineStyle;
@@ -1130,3 +1168,4 @@ window.selectLineWidth = selectLineWidth;
 window.undoLast = undoLast;
 window.redoLast = redoLast;
 window.clearAll = clearAll;
+window.resizeMapCanvas = resizeMapCanvas;
