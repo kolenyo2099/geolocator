@@ -95,6 +95,7 @@ class KonvaPanel {
 
   clear() {
     [...this.shapes].forEach(shape => {
+      this.cleanupArrowLabel(shape, true);
       shape.destroy();
     });
     this.shapes.clear();
@@ -132,12 +133,30 @@ class KonvaPanel {
       this.layer.batchDraw();
     });
 
+    if (shape.getAttr('shapeType') === 'arrow') {
+      const update = () => {
+        this.updateArrowMeasurement(shape);
+      };
+      shape.on('dragmove transform', update);
+      shape.on('pointsChange strokeChange strokeWidthChange', update);
+      shape.on('destroy', () => {
+        this.cleanupArrowLabel(shape, true);
+      });
+    }
+
     this.shapes.add(shape);
   }
 
   addShape(shape) {
     this.registerShape(shape);
     this.layer.add(shape);
+    if (shape.getAttr('shapeType') === 'arrow') {
+      const label = this.ensureArrowLabel(shape);
+      if (label) {
+        label.moveToTop();
+        this.updateArrowMeasurement(shape);
+      }
+    }
     this.layer.draw();
   }
 
@@ -146,6 +165,7 @@ class KonvaPanel {
     if (this.transformer.nodes().includes(shape)) {
       this.transformer.nodes([]);
     }
+    this.cleanupArrowLabel(shape);
     shape.remove();
     this.layer.draw();
   }
@@ -205,6 +225,10 @@ class KonvaPanel {
       case 'polygon':
       case 'freehand':
         shape.points(state.points);
+        if (state.type === 'arrow') {
+          this.ensureArrowLabel(shape);
+          this.updateArrowMeasurement(shape);
+        }
         break;
       case 'text':
         shape.position({ x: state.x, y: state.y });
@@ -561,6 +585,118 @@ class KonvaPanel {
     points[2] = pos.x;
     points[3] = pos.y;
     line.points(points);
+    if (line.getAttr('shapeType') === 'arrow') {
+      this.ensureArrowLabel(line);
+      this.updateArrowMeasurement(line);
+    }
+  }
+
+  ensureArrowLabel(shape) {
+    if (!shape || shape.getAttr('shapeType') !== 'arrow') return null;
+    let label = shape._measurementLabel;
+    if (label && typeof label.isDestroyed === 'function' && label.isDestroyed()) {
+      label = null;
+    }
+    if (!label) {
+      label = new Konva.Text({
+        text: '',
+        fontSize: 12,
+        fontFamily: 'Inter, Arial, sans-serif',
+        fill: shape.stroke() || '#FF4444',
+        padding: 2,
+        align: 'center',
+        listening: false,
+        name: 'arrow-measurement-label',
+        visible: false
+      });
+      shape._measurementLabel = label;
+    }
+    label.fill(shape.stroke() || '#FF4444');
+    if (label.getLayer() !== this.layer) {
+      this.layer.add(label);
+    }
+    return label;
+  }
+
+  cleanupArrowLabel(shape, destroy = false) {
+    if (!shape || shape.getAttr('shapeType') !== 'arrow') return;
+    const label = shape._measurementLabel;
+    if (!label) return;
+    if (destroy) {
+      label.destroy();
+      shape._measurementLabel = null;
+    } else {
+      label.remove();
+    }
+  }
+
+  updateArrowMeasurement(shape) {
+    if (!shape || shape.getAttr('shapeType') !== 'arrow') return;
+    const label = this.ensureArrowLabel(shape);
+    if (!label) return;
+
+    const points = shape.points();
+    if (!points || points.length < 4) {
+      label.visible(false);
+      return;
+    }
+
+    const start = { x: points[0], y: points[1] };
+    const end = { x: points[points.length - 2], y: points[points.length - 1] };
+    const transform = shape.getAbsoluteTransform().copy();
+    const startAbs = transform.point(start);
+    const endAbs = transform.point(end);
+
+    const dx = endAbs.x - startAbs.x;
+    const dy = endAbs.y - startAbs.y;
+    const length = Math.sqrt(dx * dx + dy * dy);
+
+    if (!length || Number.isNaN(length)) {
+      label.visible(false);
+      return;
+    }
+
+    const text = Math.round(length).toString();
+    label.text(text);
+    label.fill(shape.stroke() || '#FF4444');
+    label.visible(true);
+    label.moveToTop();
+
+    const midpoint = {
+      x: (startAbs.x + endAbs.x) / 2,
+      y: (startAbs.y + endAbs.y) / 2
+    };
+
+    let perpX = -dy;
+    let perpY = dx;
+    const perpLength = Math.sqrt(perpX * perpX + perpY * perpY);
+    const offsetDistance = 12;
+    if (perpLength > 0) {
+      perpX = (perpX / perpLength) * offsetDistance;
+      perpY = (perpY / perpLength) * offsetDistance;
+    } else {
+      perpX = 0;
+      perpY = -offsetDistance;
+    }
+
+    const absolutePosition = {
+      x: midpoint.x + perpX,
+      y: midpoint.y + perpY
+    };
+
+    label.absolutePosition(absolutePosition);
+    label.offset({ x: label.width() / 2, y: label.height() / 2 });
+
+    let angle = Math.atan2(dy, dx) * (180 / Math.PI);
+    if (angle > 90 || angle < -90) {
+      angle += 180;
+    }
+    label.rotation(angle);
+
+    const layer = label.getLayer();
+    if (layer) {
+      layer.batchDraw();
+    }
   }
 }
 
@@ -590,13 +726,15 @@ class KonvaManager {
       const panel = new KonvaPanel(def.key, container, this.router, { forwardTarget });
       this.panels.set(def.key, panel);
 
-      container.addEventListener('mousedown', () => {
+      const focusHandler = () => {
         if (def.key === 'map-overlay') {
-          this.router.setActivePanel('map-overlay');
+          this.router.focusMapPanel();
         } else {
           this.router.setActivePanel(def.key);
         }
-      });
+      };
+
+      container.addEventListener('pointerdown', focusHandler);
     });
 
     window.addEventListener('resize', () => {
@@ -614,7 +752,10 @@ class KonvaManager {
 
   updatePointerBehavior(tool) {
     this.panels.forEach((panel, panelKey) => {
-      const shouldEnable = this.activePanel && panelKey === this.activePanel;
+      let shouldEnable = this.activePanel && panelKey === this.activePanel;
+      if (panelKey === 'map-overlay' && this.router && this.router.usesGeoman(tool)) {
+        shouldEnable = false;
+      }
       panel.setPointerEnabled(shouldEnable);
     });
   }
@@ -707,6 +848,10 @@ class DrawingRouter {
   }
 
   setActivePanel(panelKey) {
+    if (panelKey === 'map-overlay' && this.usesGeoman()) {
+      panelKey = 'map';
+    }
+
     this.activePanel = panelKey;
     if (panelKey === 'map') {
       this.konvaManager.setActivePanel(null);
@@ -718,6 +863,18 @@ class DrawingRouter {
       }
     }
     this.konvaManager.updatePointerBehavior(this.state.tool);
+  }
+
+  usesGeoman(tool = this.state.tool) {
+    return ['rect', 'polygon', 'circle', 'line', 'freehand'].includes(tool);
+  }
+
+  desiredMapPanel(tool = this.state.tool) {
+    return this.usesGeoman(tool) ? 'map' : 'map-overlay';
+  }
+
+  focusMapPanel() {
+    this.setActivePanel(this.desiredMapPanel());
   }
 
   enableGeomanForCurrentTool() {
@@ -783,8 +940,13 @@ class DrawingRouter {
 
   selectTool(tool) {
     this.state.tool = tool;
-    if (this.activePanel === 'map') {
-      this.enableGeomanForCurrentTool();
+    if (this.activePanel === 'map' || this.activePanel === 'map-overlay') {
+      const desiredPanel = this.desiredMapPanel(tool);
+      if (desiredPanel !== this.activePanel) {
+        this.setActivePanel(desiredPanel);
+      } else if (desiredPanel === 'map') {
+        this.enableGeomanForCurrentTool();
+      }
     }
     this.updateToolbarUI();
     this.konvaManager.updatePointerBehavior(tool);
