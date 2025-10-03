@@ -17,6 +17,23 @@ const imageViewer = document.getElementById('imageViewer');
 const imageCanvas = document.getElementById('imageCanvas');
 const ctx = imageCanvas.getContext('2d');
 
+function getCurrentTool() {
+  return (window.drawingRouter && drawingRouter.state && drawingRouter.state.tool) || 'pan';
+}
+
+function getCanvasCoords(event, canvas) {
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+
+  const px = (event.clientX - rect.left) * scaleX;
+  const py = (event.clientY - rect.top) * scaleY;
+  return {
+    x: (px - imagePanX) / imageZoom,
+    y: (py - imagePanY) / imageZoom
+  };
+}
+
 function worldToLayerCoords(worldX, worldY, layer, options = {}) {
   if (!layer) return null;
 
@@ -69,59 +86,6 @@ function layerCoordsToWorld(point, layer) {
     x: rotatedX + centerX,
     y: rotatedY + centerY
   };
-}
-
-function convertImageShapeToWorld(shape, layer) {
-  if (!shape) return null;
-
-  if (!shape.layerId) {
-    return shape;
-  }
-
-  if (!layer) return null;
-
-  const base = {
-    type: shape.type,
-    color: shape.color,
-    dashed: shape.dashed,
-    lineWidth: shape.lineWidth,
-    filled: shape.filled,
-    fillOpacity: shape.fillOpacity
-  };
-
-  if (shape.type === 'polygon' && Array.isArray(shape.points)) {
-    const points = shape.points
-      .map(pt => layerCoordsToWorld(pt, layer))
-      .filter(Boolean)
-      .map(pt => ({ x: pt.x, y: pt.y }));
-
-    if (points.length === 0) return null;
-
-    return {
-      ...base,
-      points
-    };
-  }
-
-  if (shape.start && shape.end) {
-    const start = layerCoordsToWorld(shape.start, layer);
-    const end = layerCoordsToWorld(shape.end, layer);
-    if (!start || !end) return null;
-
-    return {
-      ...base,
-      startX: start.x,
-      startY: start.y,
-      endX: end.x,
-      endY: end.y
-    };
-  }
-
-  if (typeof shape.startX === 'number' && typeof shape.startY === 'number') {
-    return shape;
-  }
-
-  return null;
 }
 
 function findTopVisibleLayerAt(worldX, worldY) {
@@ -490,12 +454,6 @@ function removeLayer(layerId, event) {
   event.stopPropagation();
   imageLayers = imageLayers.filter(l => l.id !== layerId);
   if (selectedLayerId === layerId) selectedLayerId = null;
-  drawingShapes = drawingShapes.filter(shape => shape.layerId !== layerId);
-  if (polygonLayerId === layerId) {
-    polygonLayerId = null;
-    imagePolygonPoints = [];
-  }
-
   updateLayersList();
 
   if (imageLayers.length === 0) {
@@ -576,39 +534,6 @@ function redrawAllLayers() {
     }
   });
   
-  drawingShapes.forEach(shape => {
-    if (shape.layerId) {
-      const layer = imageLayers.find(l => l.id === shape.layerId && l.visible);
-      if (!layer) return;
-      const worldShape = convertImageShapeToWorld(shape, layer);
-      if (worldShape) drawShapeOnContext(ctx, worldShape);
-    } else {
-      drawShapeOnContext(ctx, shape);
-    }
-  });
-
-  if (currentTool === 'polygon' && imagePolygonPoints.length > 0 && polygonLayerId) {
-    const layer = imageLayers.find(l => l.id === polygonLayerId && l.visible);
-    if (layer) {
-      const previewPoints = imagePolygonPoints
-        .map(pt => layerCoordsToWorld(pt, layer))
-        .filter(Boolean);
-
-      if (previewPoints.length > 0) {
-        ctx.save();
-        ctx.fillStyle = currentColor;
-        ctx.strokeStyle = '#fff';
-        ctx.lineWidth = Math.max(1, 2 / imageZoom);
-        previewPoints.forEach(pt => {
-          ctx.beginPath();
-          ctx.arc(pt.x, pt.y, 4 / imageZoom, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.stroke();
-        });
-        ctx.restore();
-      }
-    }
-  }
   ctx.setTransform(1, 0, 0, 1, 0, 0);
 }
 
@@ -649,16 +574,17 @@ function getRotateHandle(x, y, layer) {
 }
 
 imageCanvas.addEventListener('mousedown', (e) => {
-  // Handle sticky note placement
-  if (currentTool === 'note') {
+  const tool = getCurrentTool();
+
+  if (tool === 'note') {
     const rect = imageCanvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     createStickyNote(x, y, document.querySelector('.image-canvas-container'));
     return;
   }
-  
-  if (currentTool === 'pan') {
+
+  if (tool === 'pan') {
     const coords = getCanvasCoords(e, imageCanvas);
     
     if (selectedLayerId) {
@@ -697,15 +623,13 @@ imageCanvas.addEventListener('mousedown', (e) => {
     }
   }
   
-  if (!isDraggingLayer && !isResizingLayer && currentTool !== 'pan' && currentTool !== 'note') {
-    handleDrawingMouseDown(e);
-  }
 });
 
 imageCanvas.addEventListener('mousemove', (e) => {
+  const tool = getCurrentTool();
   const coords = getCanvasCoords(e, imageCanvas);
-  
-  if (currentTool === 'pan' && selectedLayerId && !isDraggingLayer && !isResizingLayer) {
+
+  if (tool === 'pan' && selectedLayerId && !isDraggingLayer && !isResizingLayer) {
     const selectedLayer = imageLayers.find(l => l.id === selectedLayerId);
     if (selectedLayer && selectedLayer.visible) {
       const handle = getResizeHandle(coords.x, coords.y, selectedLayer);
@@ -755,22 +679,19 @@ imageCanvas.addEventListener('mousemove', (e) => {
       redrawAllLayers();
       updateLayersList();
     }
-  } else if (imageDrawing) {
-    handleDrawingMouseMove(e);
   }
 });
 
 imageCanvas.addEventListener('mouseup', (e) => {
+  const tool = getCurrentTool();
   if (isDraggingLayer) {
     isDraggingLayer = false;
   } else if (isResizingLayer) {
     isResizingLayer = false;
     resizeHandle = null;
-  } else if (imageDrawing) {
-    handleDrawingMouseUp(e);
   }
-  
-  if (currentTool === 'pan') {
+
+  if (tool === 'pan') {
     imageCanvas.style.cursor = 'grab';
   }
 });

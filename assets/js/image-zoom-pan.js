@@ -8,6 +8,10 @@ let panStartY = 0;
 
 const imageContainer = document.querySelector('.image-canvas-container');
 
+function getActiveTool() {
+  return (window.drawingRouter && drawingRouter.state && drawingRouter.state.tool) || 'pan';
+}
+
 imageContainer.addEventListener('wheel', (e) => {
   if (imageLayers.length === 0) return;
   
@@ -30,7 +34,7 @@ imageContainer.addEventListener('wheel', (e) => {
 imageContainer.addEventListener('mousedown', (e) => {
   const leftClick = e.button === 0;
   const midClick = e.button === 1;
-  if ((midClick || (leftClick && currentTool === 'pan')) && !isDraggingLayer && !isResizingLayer) {
+  if ((midClick || (leftClick && getActiveTool() === 'pan')) && !isDraggingLayer && !isResizingLayer) {
     e.preventDefault();
     isPanning = true;
     panStartX = e.clientX - imagePanX;

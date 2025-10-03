@@ -20,8 +20,9 @@ function showStreetView() {
   const iframe = document.getElementById('streetViewPano');
   
   iframe.src = `https://www.google.com/maps/embed/v1/streetview?location=${lat},${lng}&key=AIzaSyBFw0Qbyq9zTFTd-tUY6dZWTgaQzuU17R8&heading=0&pitch=0&fov=90`;
-  
+
   console.log(`Street View loaded at ${lat}, ${lng}`);
+  if (typeof syncDrawingPanel === 'function') syncDrawingPanel();
 }
 
 async function showMapillary() {
@@ -130,6 +131,7 @@ async function showMapillary() {
 
     statusEl.textContent = 'Mapillary loaded successfully';
 
+    if (typeof syncDrawingPanel === 'function') syncDrawingPanel();
   } catch (error) {
     console.error('Mapillary error:', error);
     alert(`Failed to load Mapillary: ${error.message}. This location may not have coverage or the token may be invalid.`);
@@ -154,13 +156,14 @@ function backToMap() {
   
   setTimeout(() => {
     map.invalidateSize();
-    if (mapMode === 'draw') resizeMapCanvas();
   }, 100);
-  
+
   if (mapillaryViewer) {
     mapillaryViewer.remove();
     mapillaryViewer = null;
   }
+
+  if (typeof syncDrawingPanel === 'function') syncDrawingPanel();
 }
 
 function toggleSidebar() {
