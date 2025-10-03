@@ -5,7 +5,7 @@
  * harmonises styling across backends.
  */
 
-/* global map, Konva, stickyNotes */
+/* global map, Konva, stickyNotes, L */
 
 const DRAWING_DEFAULTS = {
   tool: 'pan',
@@ -83,6 +83,14 @@ class KonvaPanel {
     this.stage.on('dblclick dbltap', (evt) => this.onDoubleClick(evt));
   }
 
+  isMapOverlay() {
+    return this.key === 'map-overlay';
+  }
+
+  shouldTrackGeo() {
+    return this.isMapOverlay() && this.router && this.router.map && typeof this.router.map.latLngToContainerPoint === 'function';
+  }
+
   setPointerEnabled(enabled) {
     if (this.forwarding) return;
     this.overlay.style.pointerEvents = enabled ? 'auto' : 'none';
@@ -124,6 +132,9 @@ class KonvaPanel {
 
     shape.on('dragend transformend', () => {
       if (!shape._initialState) return;
+      if (this.shouldTrackGeo()) {
+        this.captureGeoReference(shape);
+      }
       const before = shape._initialState;
       const after = this.serializeShape(shape);
       shape._initialState = null;
@@ -159,6 +170,10 @@ class KonvaPanel {
   addShape(shape) {
     this.registerShape(shape);
     this.layer.add(shape);
+    if (this.shouldTrackGeo()) {
+      this.restoreGeoReference(shape);
+      this.captureGeoReference(shape);
+    }
     if (shape.getAttr('shapeType') === 'arrow') {
       const label = this.ensureArrowLabel(shape);
       if (label) {
@@ -190,24 +205,42 @@ class KonvaPanel {
       dash: shape.dash(),
       fill: shape.fill()
     };
+    let result;
 
     switch (type) {
       case 'rect':
-        return { ...common, x: shape.x(), y: shape.y(), width: shape.width(), height: shape.height() };
+        result = { ...common, x: shape.x(), y: shape.y(), width: shape.width(), height: shape.height() };
+        break;
       case 'ellipse':
-        return { ...common, x: shape.x(), y: shape.y(), radiusX: shape.radiusX(), radiusY: shape.radiusY() };
+        result = { ...common, x: shape.x(), y: shape.y(), radiusX: shape.radiusX(), radiusY: shape.radiusY() };
+        break;
       case 'circle':
-        return { ...common, x: shape.x(), y: shape.y(), radius: shape.radius() };
+        result = { ...common, x: shape.x(), y: shape.y(), radius: shape.radius() };
+        break;
       case 'line':
       case 'arrow':
       case 'polygon':
       case 'freehand':
-        return { ...common, points: [...shape.points()] };
+        result = { ...common, points: [...shape.points()] };
+        break;
       case 'text':
-        return { ...common, x: shape.x(), y: shape.y(), text: shape.text(), fontSize: shape.fontSize() };
+        result = { ...common, x: shape.x(), y: shape.y(), text: shape.text(), fontSize: shape.fontSize() };
+        break;
       default:
-        return null;
+        result = null;
     }
+
+    if (!result) return null;
+
+    if (this.shouldTrackGeo()) {
+      result = {
+        ...result,
+        geoPoints: shape.getAttr('geoPoints') || null,
+        geoPoint: shape.getAttr('geoPoint') || null
+      };
+    }
+
+    return result;
   }
 
   applyShapeState(shape, state) {
@@ -248,6 +281,16 @@ class KonvaPanel {
         break;
       default:
         break;
+    }
+    if (this.shouldTrackGeo()) {
+      if (state.geoPoints) {
+        shape.setAttr('geoPoints', state.geoPoints);
+      }
+      if (state.geoPoint) {
+        shape.setAttr('geoPoint', state.geoPoint);
+      }
+      this.restoreGeoReference(shape);
+      this.captureGeoReference(shape);
     }
     this.layer.batchDraw();
   }
@@ -449,6 +492,9 @@ class KonvaPanel {
       return;
     }
 
+    if (this.shouldTrackGeo()) {
+      this.captureGeoReference(shape);
+    }
     this.router.recordAdd(this.key, shape);
   }
 
@@ -552,6 +598,9 @@ class KonvaPanel {
     line.points([...this.pendingPolygon.points]);
     this.pendingPolygon = null;
     this.layer.batchDraw();
+    if (this.shouldTrackGeo()) {
+      this.captureGeoReference(line);
+    }
     this.router.recordAdd(this.key, line);
   }
 
@@ -593,8 +642,13 @@ class KonvaPanel {
   updateLine(pos) {
     const line = this.drawingShape;
     const points = line.points();
-    points[2] = pos.x;
-    points[3] = pos.y;
+    let endX = pos.x;
+    let endY = pos.y;
+    if (this.router && typeof this.router.isShiftPressed === 'function' && this.router.isShiftPressed()) {
+      endY = points[1];
+    }
+    points[2] = endX;
+    points[3] = endY;
     line.points(points);
     if (line.getAttr('shapeType') === 'arrow') {
       this.ensureArrowLabel(line);
@@ -982,6 +1036,68 @@ class KonvaPanel {
       layer.batchDraw();
     }
   }
+
+  captureGeoReference(shape) {
+    if (!this.shouldTrackGeo() || !shape) return;
+    const map = this.router.map;
+    if (!map || !map.containerPointToLatLng || typeof L === 'undefined' || typeof L.point !== 'function') return;
+
+    const type = shape.getAttr('shapeType');
+
+    if (['line', 'arrow', 'polygon', 'freehand'].includes(type)) {
+      const points = shape.points();
+      if (!points || points.length < 2) return;
+      const transform = shape.getAbsoluteTransform().copy();
+      const geoPoints = [];
+      for (let i = 0; i < points.length; i += 2) {
+        const abs = transform.point({ x: points[i], y: points[i + 1] });
+        const latLng = map.containerPointToLatLng(L.point(abs.x, abs.y));
+        geoPoints.push([latLng.lat, latLng.lng]);
+      }
+      shape.setAttr('geoPoints', geoPoints);
+    } else if (type === 'text') {
+      const pos = shape.getAbsolutePosition();
+      const latLng = map.containerPointToLatLng(L.point(pos.x, pos.y));
+      shape.setAttr('geoPoint', [latLng.lat, latLng.lng]);
+    }
+  }
+
+  restoreGeoReference(shape) {
+    if (!this.shouldTrackGeo() || !shape) return;
+    const map = this.router.map;
+    if (!map || !map.latLngToContainerPoint || typeof L === 'undefined' || typeof L.point !== 'function') return;
+
+    const type = shape.getAttr('shapeType');
+    if (['line', 'arrow', 'polygon', 'freehand'].includes(type)) {
+      const geoPoints = shape.getAttr('geoPoints');
+      if (!Array.isArray(geoPoints) || geoPoints.length < 1) return;
+      const flat = [];
+      geoPoints.forEach(([lat, lng]) => {
+        const point = map.latLngToContainerPoint([lat, lng]);
+        flat.push(point.x, point.y);
+      });
+      shape.position({ x: 0, y: 0 });
+      shape.points(flat);
+      if (type === 'arrow') {
+        this.ensureArrowLabel(shape);
+        this.updateArrowMeasurement(shape);
+        this.updateArrowIntersections(shape);
+      }
+    } else if (type === 'text') {
+      const geoPoint = shape.getAttr('geoPoint');
+      if (!geoPoint) return;
+      const point = map.latLngToContainerPoint(geoPoint);
+      shape.position({ x: point.x, y: point.y });
+    }
+  }
+
+  syncWithMap() {
+    if (!this.shouldTrackGeo()) return;
+    this.shapes.forEach(shape => {
+      this.restoreGeoReference(shape);
+    });
+    this.layer.batchDraw();
+  }
 }
 
 class KonvaManager {
@@ -993,7 +1109,7 @@ class KonvaManager {
 
   panelDefinitions() {
     return [
-      { key: 'map-overlay', selector: '#map', forwardSelector: '#mapCanvas', zIndex: 650 },
+      { key: 'map-overlay', selector: '#map', forwardSelector: '#mapCanvas', zIndex: 1600 },
       { key: 'image', selector: '.image-canvas-container', forwardSelector: '#imageCanvas' },
       { key: 'view3d', selector: '#view3DContainer', forwardSelector: '#view3DCanvas' },
       { key: 'peakfinder', selector: '#peakFinderContainer', forwardSelector: '#pfcanvas' },
@@ -1071,11 +1187,13 @@ class DrawingRouter {
     this.konvaManager = new KonvaManager(this);
     this.activePanel = 'map';
     this.geomanLayers = new Set();
+    this.modifiers = { shift: false };
   }
 
   init() {
     this.konvaManager.init();
     this.attachMapHandlers();
+    this.setupKeyboardHandlers();
     this.setActivePanel('map');
     this.updateToolbarUI();
     this.konvaManager.updatePointerBehavior(this.state.tool);
@@ -1098,6 +1216,17 @@ class DrawingRouter {
           layer.addTo(this.map);
         }
       });
+    });
+
+    const syncOverlay = () => {
+      const panel = this.konvaManager.getPanel('map-overlay');
+      if (panel) {
+        panel.syncWithMap();
+      }
+    };
+
+    ['move', 'moveend', 'zoom', 'zoomend', 'zoomanim', 'rotate', 'resize'].forEach(evtName => {
+      this.map.on(evtName, syncOverlay);
     });
   }
 
@@ -1162,6 +1291,38 @@ class DrawingRouter {
 
   usesGeoman(tool = this.state.tool) {
     return ['rect', 'polygon', 'circle', 'line'].includes(tool);
+  }
+
+  setupKeyboardHandlers() {
+    if (this._keyboardHandlersAttached) return;
+    this._keyboardHandlersAttached = true;
+
+    const updateShift = (value) => {
+      this.modifiers.shift = value;
+    };
+
+    window.addEventListener('keydown', (evt) => {
+      if (evt.key === 'Shift') {
+        updateShift(true);
+      }
+    });
+
+    window.addEventListener('keyup', (evt) => {
+      if (evt.key === 'Shift') {
+        updateShift(false);
+      }
+    });
+
+    window.addEventListener('blur', () => updateShift(false));
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'visible') {
+        updateShift(false);
+      }
+    });
+  }
+
+  isShiftPressed() {
+    return !!this.modifiers.shift;
   }
 
   desiredMapPanel(tool = this.state.tool) {
@@ -1458,6 +1619,9 @@ function resizeMapCanvas() {
     const panel = drawingRouter.konvaManager.getPanel('map-overlay');
     if (panel && typeof panel.resize === 'function') {
       panel.resize();
+      if (typeof panel.syncWithMap === 'function') {
+        panel.syncWithMap();
+      }
     }
   }
 }
