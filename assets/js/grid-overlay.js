@@ -8,6 +8,7 @@
   const DEFAULT_GRID_KM = 1;
   let gridEnabled = false;
   let gridSizeKm = DEFAULT_GRID_KM;
+  let gridThicknessPx = 1;
   const gridLayer = L.layerGroup();
 
   const menuContainer = document.getElementById('mapGridMenu');
@@ -23,6 +24,15 @@
 
   function formatInputValue(value) {
     return Number.parseFloat(value.toFixed(2));
+  }
+
+  function clampThickness(value) {
+    if (Number.isNaN(value) || !Number.isFinite(value)) {
+      return gridThicknessPx;
+    }
+    const min = 1;
+    const max = 5;
+    return Math.max(min, Math.min(max, Math.round(value)));
   }
 
   function updateGrid() {
@@ -58,9 +68,9 @@
       const startLatLng = crs.unproject(startPoint);
       const endLatLng = crs.unproject(endPoint);
       const line = L.polyline([startLatLng, endLatLng], {
-        color: '#333',
+        color: '#FFD700',
         opacity: 0.35,
-        weight: 1,
+        weight: gridThicknessPx,
         interactive: false
       });
       gridLayer.addLayer(line);
@@ -72,9 +82,9 @@
       const startLatLng = crs.unproject(startPoint);
       const endLatLng = crs.unproject(endPoint);
       const line = L.polyline([startLatLng, endLatLng], {
-        color: '#333',
+        color: '#FFD700',
         opacity: 0.35,
-        weight: 1,
+        weight: gridThicknessPx,
         interactive: false
       });
       gridLayer.addLayer(line);
@@ -83,6 +93,7 @@
 
   const toggleBtn = document.getElementById('mapGridToggle');
   const sizeInput = document.getElementById('mapGridSize');
+  const thicknessInput = document.getElementById('mapGridThickness');
 
   function setMenuOpen(open) {
     menuOpen = open;
@@ -137,6 +148,9 @@
 
     if (sizeInput && document.activeElement !== sizeInput) {
       sizeInput.value = formatInputValue(gridSizeKm);
+    }
+    if (thicknessInput && document.activeElement !== thicknessInput) {
+      thicknessInput.value = String(gridThicknessPx);
     }
   }
 
@@ -196,6 +210,30 @@
     sizeInput.addEventListener('blur', commitSize);
   } else {
     console.warn('Map grid size input not found in grid menu.');
+  }
+
+  if (thicknessInput) {
+    const initialThickness = clampThickness(parseInt(thicknessInput.value, 10));
+    gridThicknessPx = initialThickness;
+    thicknessInput.value = String(gridThicknessPx);
+
+    const commitThickness = function() {
+      const parsed = parseInt(thicknessInput.value, 10);
+      const newValue = clampThickness(parsed);
+      const changed = newValue !== gridThicknessPx;
+      gridThicknessPx = newValue;
+      thicknessInput.value = String(gridThicknessPx);
+      syncUI();
+      if (changed && gridEnabled) {
+        updateGrid();
+      }
+    };
+
+    thicknessInput.addEventListener('change', commitThickness);
+    thicknessInput.addEventListener('input', commitThickness);
+    thicknessInput.addEventListener('blur', commitThickness);
+  } else {
+    console.warn('Map grid thickness input not found in grid menu.');
   }
 
   if (menuContainer) {
