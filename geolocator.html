@@ -329,8 +329,17 @@
           <div id="status">Ready</div>
 
           <div class="layer-toggle">
-            <label>Map Layer</label>
-            <div style="display:grid;gap:.5rem">
+            <div class="layer-toggle__header">
+              <label>Map Layer</label>
+              <div class="map-grid-control" id="mapGridControls">
+                <button class="map-grid-toggle" id="mapGridToggle" type="button" aria-pressed="false">Show Grid</button>
+                <label class="map-grid-size" for="mapGridSize">
+                  <span>Cell (km)</span>
+                  <input id="mapGridSize" type="number" min="0.1" step="0.1" value="1" inputmode="decimal"/>
+                </label>
+              </div>
+            </div>
+            <div class="layer-toggle__buttons">
               <button class="toggle-btn active" id="layerStreet" onclick="setMapLayer('street')">
                 🗺️ Street Map
               </button>
@@ -403,7 +412,7 @@
         <div class="layers-panel" id="layersPanel">
           <h4>Image Layers</h4>
           <div class="layers-list" id="layersList">
-            <p class="no-layers">No images uploaded</p>
+            <p class="no-layers">No layers yet</p>
           </div>
         </div>
         
