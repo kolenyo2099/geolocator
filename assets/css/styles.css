@@ -883,3 +883,51 @@ body.resizing .resizer {
 .sticky-note-textarea::placeholder{
   color:rgba(0,0,0,0.4);
 }
+
+/* Map Grid Control */
+.grid-overlay-control{
+  background:rgba(255,255,255,0.95);
+  padding:.6rem .7rem;
+  border-radius:8px;
+  box-shadow:0 4px 12px rgba(0,0,0,0.15);
+  display:flex;
+  flex-direction:column;
+  gap:.5rem;
+  min-width:140px;
+}
+.grid-overlay-title{
+  font-size:.85rem;
+  font-weight:600;
+  color:#333;
+}
+.grid-overlay-size{
+  display:flex;
+  flex-direction:column;
+  gap:.3rem;
+  font-size:.75rem;
+  color:#555;
+}
+.grid-overlay-input{
+  padding:.35rem .4rem;
+  border:1px solid #d0d0d0;
+  border-radius:4px;
+  font-size:.85rem;
+  width:100%;
+}
+.grid-overlay-toggle{
+  border:none;
+  background:#9D2235;
+  color:#fff;
+  padding:.45rem;
+  border-radius:4px;
+  font-size:.85rem;
+  font-weight:600;
+  cursor:pointer;
+  transition:background .2s ease;
+}
+.grid-overlay-toggle:hover{
+  background:#C5283D;
+}
+.grid-overlay-toggle.active{
+  background:#444;
+}
