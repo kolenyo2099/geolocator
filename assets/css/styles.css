@@ -722,9 +722,6 @@ body.resizing .resizer {
   flex:1 1 auto;
   margin:0;
 }
-.layer-toggle__header .map-grid-control{
-  flex:1 1 170px;
-}
 .layer-toggle__buttons{
   display:grid;
   gap:.5rem;
@@ -919,23 +916,47 @@ body.resizing .resizer {
 }
 
 /* Map Grid Control */
+.map-grid-menu{
+  position:absolute;
+  top:4.25rem;
+  right:1rem;
+  z-index:1400;
+  background:#fff;
+  border-radius:12px;
+  padding:1rem;
+  width:220px;
+  box-shadow:0 12px 32px rgba(0,0,0,.18);
+  display:none;
+}
+.map-grid-menu.open{
+  display:block;
+}
+.map-grid-menu:focus{
+  outline:none;
+  box-shadow:0 0 0 2px rgba(157,34,53,.2),0 12px 32px rgba(0,0,0,.18);
+}
+.map-grid-menu__title{
+  font-size:.85rem;
+  font-weight:600;
+  color:#333;
+  margin-bottom:.6rem;
+}
 .map-grid-control{
   display:flex;
-  align-items:center;
-  justify-content:flex-end;
-  gap:.5rem;
-  flex-wrap:wrap;
+  flex-direction:column;
+  gap:.75rem;
 }
 .map-grid-toggle{
-  padding:.35rem .75rem;
+  padding:.45rem .75rem;
   border:1px solid #ddd;
   border-radius:6px;
   background:#fff;
-  font-size:.75rem;
+  font-size:.8rem;
   font-weight:600;
   cursor:pointer;
   transition:all 0.2s ease;
   font-family:'Inter',sans-serif;
+  width:100%;
 }
 .map-grid-toggle:hover{
   border-color:#9D2235;
@@ -949,15 +970,19 @@ body.resizing .resizer {
 .map-grid-size{
   display:flex;
   align-items:center;
-  gap:.4rem;
+  justify-content:space-between;
+  gap:.5rem;
   font-size:.75rem;
   color:#555;
 }
+.map-grid-size span{
+  font-weight:500;
+}
 .map-grid-size input{
-  width:64px;
-  padding:.35rem .45rem;
+  width:80px;
+  padding:.4rem .5rem;
   border:1px solid #ccc;
-  border-radius:4px;
+  border-radius:6px;
   font-size:.8rem;
   font-family:'Inter',sans-serif;
 }
@@ -965,4 +990,32 @@ body.resizing .resizer {
   outline:none;
   border-color:#9D2235;
   box-shadow:0 0 0 2px rgba(157,34,53,.15);
+}
+.map-grid-launcher{
+  margin-top:4px;
+}
+.map-grid-launch{
+  width:30px;
+  height:30px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  border:none;
+  background:#fff;
+  color:#9D2235;
+  font-size:18px;
+  cursor:pointer;
+  padding:0;
+  border-radius:4px;
+  transition:background 0.2s ease,color 0.2s ease;
+}
+.map-grid-launch:hover{
+  background:#f0f0f0;
+}
+.map-grid-launch.active{
+  background:linear-gradient(135deg,#9D2235,#C5283D);
+  color:#fff;
+}
+.map-grid-launch.open{
+  box-shadow:0 0 0 2px rgba(157,34,53,.2);
 }

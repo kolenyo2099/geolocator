@@ -10,6 +10,10 @@
   let gridSizeKm = DEFAULT_GRID_KM;
   const gridLayer = L.layerGroup();
 
+  const menuContainer = document.getElementById('mapGridMenu');
+  let menuLauncherButton = null;
+  let menuOpen = false;
+
   function clampGridSize(value) {
     if (Number.isNaN(value) || !Number.isFinite(value)) {
       return gridSizeKm;
@@ -80,12 +84,56 @@
   const toggleBtn = document.getElementById('mapGridToggle');
   const sizeInput = document.getElementById('mapGridSize');
 
+  function setMenuOpen(open) {
+    menuOpen = open;
+    if (menuContainer) {
+      if (open) {
+        menuContainer.classList.add('open');
+        menuContainer.removeAttribute('hidden');
+        menuContainer.setAttribute('aria-hidden', 'false');
+        if (typeof menuContainer.focus === 'function') {
+          menuContainer.focus();
+        }
+      } else {
+        menuContainer.classList.remove('open');
+        menuContainer.setAttribute('hidden', '');
+        menuContainer.setAttribute('aria-hidden', 'true');
+      }
+    }
+
+    if (menuLauncherButton) {
+      menuLauncherButton.classList.toggle('open', open);
+      menuLauncherButton.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+  }
+
+  function toggleMenu() {
+    setMenuOpen(!menuOpen);
+  }
+
+  function closeMenu() {
+    if (menuOpen) {
+      setMenuOpen(false);
+      if (menuLauncherButton && typeof menuLauncherButton.focus === 'function') {
+        menuLauncherButton.focus();
+      }
+    }
+  }
+
+  function updateLauncherState() {
+    if (!menuLauncherButton) return;
+    menuLauncherButton.classList.toggle('active', gridEnabled);
+    menuLauncherButton.setAttribute('aria-pressed', gridEnabled ? 'true' : 'false');
+  }
+
   function syncUI() {
     if (toggleBtn) {
       toggleBtn.textContent = gridEnabled ? 'Hide Grid' : 'Show Grid';
       toggleBtn.classList.toggle('active', gridEnabled);
       toggleBtn.setAttribute('aria-pressed', gridEnabled ? 'true' : 'false');
     }
+
+    updateLauncherState();
 
     if (sizeInput && document.activeElement !== sizeInput) {
       sizeInput.value = formatInputValue(gridSizeKm);
@@ -121,9 +169,10 @@
   if (toggleBtn) {
     toggleBtn.addEventListener('click', function() {
       setGridEnabled(!gridEnabled);
+      closeMenu();
     });
   } else {
-    console.warn('Map grid toggle button not found in sidebar.');
+    console.warn('Map grid toggle button not found in grid menu.');
   }
 
   if (sizeInput) {
@@ -146,8 +195,55 @@
     sizeInput.addEventListener('change', commitSize);
     sizeInput.addEventListener('blur', commitSize);
   } else {
-    console.warn('Map grid size input not found in sidebar.');
+    console.warn('Map grid size input not found in grid menu.');
   }
+
+  if (menuContainer) {
+    const stop = (evt) => evt.stopPropagation();
+    menuContainer.addEventListener('mousedown', stop);
+    menuContainer.addEventListener('touchstart', stop);
+    menuContainer.addEventListener('click', stop);
+    menuContainer.addEventListener('keydown', (evt) => {
+      if (evt.key === 'Escape') {
+        evt.preventDefault();
+        closeMenu();
+      }
+    });
+  }
+
+  const GridMenuControl = L.Control.extend({
+    onAdd() {
+      const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control map-grid-launcher');
+      const button = L.DomUtil.create('button', 'map-grid-launch', container);
+      button.type = 'button';
+      button.title = 'Grid overlay controls';
+      button.setAttribute('aria-label', 'Grid overlay controls');
+      button.setAttribute('aria-haspopup', 'true');
+      button.innerHTML = '&#x2317;';
+
+      L.DomEvent.on(button, 'click', (evt) => {
+        L.DomEvent.stop(evt);
+        toggleMenu();
+      });
+      L.DomEvent.on(button, 'keydown', (evt) => {
+        if (evt.key === 'Enter' || evt.key === ' ') {
+          L.DomEvent.stop(evt);
+          toggleMenu();
+        }
+      });
+
+      L.DomEvent.disableClickPropagation(container);
+      L.DomEvent.disableScrollPropagation(container);
+
+      menuLauncherButton = button;
+      updateLauncherState();
+      return container;
+    }
+  });
+
+  new GridMenuControl({ position: 'topright' }).addTo(map);
+
+  setMenuOpen(false);
 
   map.on('moveend zoomend rotate', updateGrid);
   syncUI();

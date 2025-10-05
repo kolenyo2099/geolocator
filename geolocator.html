@@ -89,6 +89,18 @@
           <span id="viewToggleIcon">🗺️</span>
           <span id="viewToggleText">Back to 2D Map</span>
         </button>
+
+        <!-- Map Grid Menu -->
+        <div class="map-grid-menu" id="mapGridMenu" hidden tabindex="-1" aria-hidden="true">
+          <div class="map-grid-menu__title">Grid Overlay</div>
+          <div class="map-grid-control" id="mapGridControls">
+            <button class="map-grid-toggle" id="mapGridToggle" type="button" aria-pressed="false">Show Grid</button>
+            <label class="map-grid-size" for="mapGridSize">
+              <span>Cell (km)</span>
+              <input id="mapGridSize" type="number" min="0.1" step="0.1" value="1" inputmode="decimal"/>
+            </label>
+          </div>
+        </div>
         
         <!-- Street View Controls -->
         <div class="street-view-controls" id="streetViewControls">
@@ -331,13 +343,6 @@
           <div class="layer-toggle">
             <div class="layer-toggle__header">
               <label>Map Layer</label>
-              <div class="map-grid-control" id="mapGridControls">
-                <button class="map-grid-toggle" id="mapGridToggle" type="button" aria-pressed="false">Show Grid</button>
-                <label class="map-grid-size" for="mapGridSize">
-                  <span>Cell (km)</span>
-                  <input id="mapGridSize" type="number" min="0.1" step="0.1" value="1" inputmode="decimal"/>
-                </label>
-              </div>
             </div>
             <div class="layer-toggle__buttons">
               <button class="toggle-btn active" id="layerStreet" onclick="setMapLayer('street')">
