@@ -106,6 +106,9 @@ class KonvaPanel {
   clear() {
     [...this.shapes].forEach(shape => {
       this.cleanupArrowLabel(shape, true);
+      if (window.drawingLayerRegistry && typeof window.drawingLayerRegistry.unregisterKonvaShape === 'function') {
+        window.drawingLayerRegistry.unregisterKonvaShape(shape, this.key);
+      }
       shape.destroy();
     });
     this.shapes.clear();
@@ -164,12 +167,21 @@ class KonvaPanel {
       });
     }
 
+    shape.on('destroy', () => {
+      if (window.drawingLayerRegistry && typeof window.drawingLayerRegistry.unregisterKonvaShape === 'function') {
+        window.drawingLayerRegistry.unregisterKonvaShape(shape, this.key);
+      }
+    });
+
     this.shapes.add(shape);
   }
 
   addShape(shape) {
     this.registerShape(shape);
     this.layer.add(shape);
+    if (window.drawingLayerRegistry && typeof window.drawingLayerRegistry.registerKonvaShape === 'function') {
+      window.drawingLayerRegistry.registerKonvaShape(shape, this.key);
+    }
     if (this.shouldTrackGeo()) {
       this.restoreGeoReference(shape);
       this.captureGeoReference(shape);
@@ -192,6 +204,9 @@ class KonvaPanel {
     }
     this.cleanupArrowLabel(shape);
     this.removeAngleMarkersForShape(shape, true);
+    if (window.drawingLayerRegistry && typeof window.drawingLayerRegistry.unregisterKonvaShape === 'function') {
+      window.drawingLayerRegistry.unregisterKonvaShape(shape, this.key);
+    }
     shape.remove();
     this.layer.draw();
   }
@@ -1220,14 +1235,25 @@ class DrawingRouter {
       const layer = e.layer;
       this.applyGeomanStyle(layer);
       this.geomanLayers.add(layer);
+      if (window.drawingLayerRegistry && typeof window.drawingLayerRegistry.registerLeafletLayer === 'function') {
+        window.drawingLayerRegistry.registerLeafletLayer(layer);
+      }
       this.recordCommand({
         type: 'geoman-add',
         layer,
         undo: () => {
+          if (window.drawingLayerRegistry && typeof window.drawingLayerRegistry.unregisterLeafletLayer === 'function') {
+            window.drawingLayerRegistry.unregisterLeafletLayer(layer);
+          }
+          this.geomanLayers.delete(layer);
           this.map.removeLayer(layer);
         },
         redo: () => {
           layer.addTo(this.map);
+          this.geomanLayers.add(layer);
+          if (window.drawingLayerRegistry && typeof window.drawingLayerRegistry.registerLeafletLayer === 'function') {
+            window.drawingLayerRegistry.registerLeafletLayer(layer);
+          }
         }
       });
     });
@@ -1529,8 +1555,14 @@ class DrawingRouter {
     if (this.map) {
       [...this.geomanLayers].forEach(layer => {
         this.map.removeLayer(layer);
+        if (window.drawingLayerRegistry && typeof window.drawingLayerRegistry.unregisterLeafletLayer === 'function') {
+          window.drawingLayerRegistry.unregisterLeafletLayer(layer);
+        }
       });
       this.geomanLayers.clear();
+    }
+    if (window.drawingLayerRegistry && typeof window.drawingLayerRegistry.clearAll === 'function') {
+      window.drawingLayerRegistry.clearAll();
     }
     this.undoStack = [];
     this.redoStack = [];

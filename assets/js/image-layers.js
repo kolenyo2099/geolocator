@@ -12,6 +12,367 @@ let resizeStartScale = 1;
 let resizeStartLayerX = 0;
 let resizeStartLayerY = 0;
 
+const drawingLayerRegistry = (() => {
+  const entries = new Map();
+  const counters = new Map();
+
+  const PANEL_LABELS = {
+    image: 'Image Canvas',
+    'map-overlay': 'Map Overlay',
+    map: 'Map',
+    view3d: '3D View',
+    peakfinder: 'Peak Finder',
+    streetview: 'Street View',
+    mapillary: 'Mapillary'
+  };
+
+  const SHAPE_LABELS = {
+    rect: 'Rectangle',
+    rectangle: 'Rectangle',
+    ellipse: 'Ellipse',
+    circle: 'Circle',
+    line: 'Line',
+    polyline: 'Polyline',
+    polygon: 'Polygon',
+    arrow: 'Arrow',
+    freehand: 'Freehand',
+    marker: 'Marker'
+  };
+
+  const SHAPE_ICONS = {
+    rect: '▭',
+    rectangle: '▭',
+    ellipse: '⬭',
+    circle: '⭕',
+    line: '／',
+    polyline: '〰️',
+    polygon: '⬡',
+    arrow: '➜',
+    freehand: '✏️',
+    marker: '📍'
+  };
+
+  function toTitleCase(value) {
+    if (!value) return '';
+    return value
+      .toString()
+      .replace(/[-_]+/g, ' ')
+      .replace(/\b\w/g, (char) => char.toUpperCase())
+      .trim();
+  }
+
+  function describePanel(panelKey) {
+    return PANEL_LABELS[panelKey] || toTitleCase(panelKey) || 'Canvas';
+  }
+
+  function describeShape(shapeType) {
+    if (!shapeType) return 'Drawing';
+    const normalized = shapeType.toString().toLowerCase();
+    return SHAPE_LABELS[normalized] || toTitleCase(shapeType) || 'Drawing';
+  }
+
+  function iconForShape(shapeType, panelKey) {
+    const normalized = shapeType ? shapeType.toString().toLowerCase() : '';
+    if (SHAPE_ICONS[normalized]) return SHAPE_ICONS[normalized];
+    if (panelKey === 'map' || panelKey === 'map-overlay') return '🗺️';
+    return '✏️';
+  }
+
+  function nextCounter(panelKey, shapeType) {
+    const key = `${panelKey}:${shapeType}`;
+    const current = counters.get(key) || 0;
+    const next = current + 1;
+    counters.set(key, next);
+    return next;
+  }
+
+  function getKonvaKey(shape, panelKey) {
+    if (!shape) return null;
+    return `konva:${panelKey}:${shape._id}`;
+  }
+
+  function ensureKonvaMetadata(shape, panelKey, shapeType) {
+    if (!shape || typeof shape.getAttr !== 'function' || typeof shape.setAttr !== 'function') {
+      return { createdAt: Date.now(), name: describeShape(shapeType) };
+    }
+
+    let createdAt = shape.getAttr('layerCreatedAt');
+    if (!createdAt) {
+      createdAt = Date.now();
+      shape.setAttr('layerCreatedAt', createdAt);
+    }
+
+    let name = shape.getAttr('layerLabel');
+    if (!name) {
+      const counter = nextCounter(panelKey, shapeType);
+      name = `${describeShape(shapeType)} · ${describePanel(panelKey)} ${counter}`;
+      shape.setAttr('layerLabel', name);
+    }
+
+    return { createdAt, name };
+  }
+
+  function getLeafletKey(layer) {
+    if (!layer) return null;
+    if (layer._leaflet_id != null) {
+      return `leaflet:${layer._leaflet_id}`;
+    }
+    if (typeof L !== 'undefined' && typeof L.stamp === 'function') {
+      return `leaflet:${L.stamp(layer)}`;
+    }
+    return `leaflet:${Date.now() + Math.random()}`;
+  }
+
+  function ensureLeafletMetadata(layer, shapeType) {
+    if (!layer) {
+      return { createdAt: Date.now(), name: describeShape(shapeType) };
+    }
+
+    let createdAt = layer._layerCreatedAt;
+    if (!createdAt) {
+      createdAt = Date.now();
+      layer._layerCreatedAt = createdAt;
+    }
+
+    let name = layer._layerLabel;
+    if (!name) {
+      const counter = nextCounter('map', shapeType);
+      name = `${describeShape(shapeType)} · Map ${counter}`;
+      layer._layerLabel = name;
+    }
+
+    return { createdAt, name };
+  }
+
+  function resolveLeafletShapeType(layer) {
+    if (!layer) return 'Drawing';
+    if (layer.pm && typeof layer.pm.getShape === 'function') {
+      return layer.pm.getShape();
+    }
+    if (typeof layer.getLatLng === 'function') return 'Marker';
+    if (typeof layer.getLatLngs === 'function') return 'Polygon';
+    return 'Drawing';
+  }
+
+  function registerKonvaShape(shape, panelKey) {
+    const key = getKonvaKey(shape, panelKey);
+    if (!key) return null;
+
+    const shapeType = (shape && typeof shape.getAttr === 'function' && shape.getAttr('shapeType')) || 'drawing';
+    const metadata = ensureKonvaMetadata(shape, panelKey, shapeType);
+
+    let entry = entries.get(key);
+    if (!entry) {
+      entry = {
+        id: key,
+        type: 'konva',
+        panelKey,
+        shapeType,
+        shape,
+        name: metadata.name,
+        origin: describePanel(panelKey),
+        icon: iconForShape(shapeType, panelKey),
+        createdAt: metadata.createdAt
+      };
+      entries.set(key, entry);
+    } else {
+      entry.shape = shape;
+      entry.shapeType = shapeType;
+      entry.icon = iconForShape(shapeType, panelKey);
+      entry.origin = describePanel(panelKey);
+      entry.name = metadata.name;
+      entry.createdAt = metadata.createdAt;
+    }
+
+    updateLayersList();
+    return entry;
+  }
+
+  function unregisterKonvaShape(shape, panelKey) {
+    const key = getKonvaKey(shape, panelKey);
+    if (!key) return;
+    if (entries.delete(key)) {
+      updateLayersList();
+    }
+  }
+
+  function registerLeafletLayer(layer) {
+    const key = getLeafletKey(layer);
+    if (!key) return null;
+    const shapeType = resolveLeafletShapeType(layer);
+    const metadata = ensureLeafletMetadata(layer, shapeType);
+
+    let entry = entries.get(key);
+    if (!entry) {
+      entry = {
+        id: key,
+        type: 'leaflet',
+        panelKey: 'map',
+        shapeType,
+        layer,
+        name: metadata.name,
+        origin: 'Map',
+        icon: iconForShape(shapeType, 'map'),
+        createdAt: metadata.createdAt
+      };
+      entries.set(key, entry);
+    } else {
+      entry.layer = layer;
+      entry.shapeType = shapeType;
+      entry.icon = iconForShape(shapeType, 'map');
+      entry.name = metadata.name;
+      entry.createdAt = metadata.createdAt;
+    }
+
+    updateLayersList();
+    return entry;
+  }
+
+  function unregisterLeafletLayer(layer) {
+    const key = getLeafletKey(layer);
+    if (!key) return;
+    if (entries.delete(key)) {
+      updateLayersList();
+    }
+  }
+
+  function focusLayer(id) {
+    const entry = entries.get(id);
+    if (!entry) return;
+
+    if (entry.type === 'konva' && entry.shape) {
+      const router = window.drawingRouter;
+      const panel = router && router.konvaManager ? router.konvaManager.getPanel(entry.panelKey) : null;
+      if (panel && panel.transformer) {
+        try {
+          panel.transformer.nodes([entry.shape]);
+          if (typeof panel.layer?.batchDraw === 'function') {
+            panel.layer.batchDraw();
+          }
+        } catch (err) {
+          console.warn('Failed to focus Konva layer', err);
+        }
+      }
+    } else if (entry.type === 'leaflet' && entry.layer) {
+      const router = window.drawingRouter;
+      const mapInstance = (router && router.map) || (typeof map !== 'undefined' ? map : null);
+      if (!mapInstance) return;
+      try {
+        if (typeof entry.layer.getBounds === 'function') {
+          const bounds = entry.layer.getBounds();
+          if (bounds && typeof bounds.isValid === 'function' && bounds.isValid()) {
+            mapInstance.fitBounds(bounds.pad ? bounds.pad(0.1) : bounds);
+          } else {
+            mapInstance.fitBounds(bounds);
+          }
+        } else if (typeof entry.layer.getLatLng === 'function') {
+          mapInstance.panTo(entry.layer.getLatLng());
+        } else if (typeof entry.layer.getLatLngs === 'function' && typeof L !== 'undefined' && typeof L.latLngBounds === 'function') {
+          const latlngs = entry.layer.getLatLngs();
+          const flat = Array.isArray(latlngs) ? latlngs.flat(Infinity) : [];
+          const points = flat.filter((pt) => pt && typeof pt.lat === 'number' && typeof pt.lng === 'number');
+          if (points.length) {
+            const bounds = L.latLngBounds(points);
+            if (bounds.isValid()) {
+              mapInstance.fitBounds(bounds.pad ? bounds.pad(0.1) : bounds);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to focus Leaflet layer', err);
+      }
+    }
+  }
+
+  function removeLayer(id) {
+    const entry = entries.get(id);
+    if (!entry) return false;
+
+    if (entry.type === 'konva' && entry.shape) {
+      const router = window.drawingRouter;
+      const panel = router && router.konvaManager ? router.konvaManager.getPanel(entry.panelKey) : null;
+      if (!panel) return false;
+
+      if (router && typeof router.recordCommand === 'function') {
+        router.recordCommand({
+          type: 'remove',
+          panelKey: entry.panelKey,
+          shape: entry.shape,
+          undo: () => {
+            panel.addShape(entry.shape);
+          },
+          redo: () => {
+            panel.removeShape(entry.shape);
+          }
+        });
+      }
+
+      panel.removeShape(entry.shape);
+      return true;
+    }
+
+    if (entry.type === 'leaflet' && entry.layer) {
+      const router = window.drawingRouter;
+      const mapInstance = (router && router.map) || (typeof map !== 'undefined' ? map : null);
+      if (!mapInstance) return false;
+
+      if (router && router.geomanLayers) {
+        router.geomanLayers.delete(entry.layer);
+      }
+
+      if (router && typeof router.recordCommand === 'function') {
+        router.recordCommand({
+          type: 'remove-geoman',
+          layer: entry.layer,
+          undo: () => {
+            entry.layer.addTo(mapInstance);
+            if (router && router.geomanLayers) {
+              router.geomanLayers.add(entry.layer);
+            }
+            registerLeafletLayer(entry.layer);
+          },
+          redo: () => {
+            mapInstance.removeLayer(entry.layer);
+            unregisterLeafletLayer(entry.layer);
+            if (router && router.geomanLayers) {
+              router.geomanLayers.delete(entry.layer);
+            }
+          }
+        });
+      }
+
+      mapInstance.removeLayer(entry.layer);
+      unregisterLeafletLayer(entry.layer);
+      return true;
+    }
+
+    return false;
+  }
+
+  function getLayers() {
+    return Array.from(entries.values()).sort((a, b) => b.createdAt - a.createdAt);
+  }
+
+  function clearAll() {
+    if (entries.size === 0) return;
+    entries.clear();
+    updateLayersList();
+  }
+
+  return {
+    registerKonvaShape,
+    unregisterKonvaShape,
+    registerLeafletLayer,
+    unregisterLeafletLayer,
+    removeLayer,
+    focusLayer,
+    getLayers,
+    clearAll
+  };
+})();
+
+window.drawingLayerRegistry = drawingLayerRegistry;
+
 const imageUpload = document.getElementById('imageUpload');
 const imageViewer = document.getElementById('imageViewer');
 const imageCanvas = document.getElementById('imageCanvas');
@@ -277,29 +638,75 @@ function handleDrop(e) {
 
 function updateLayersList() {
   const list = document.getElementById('layersList');
-  
-  if (imageLayers.length === 0) {
-    list.innerHTML = '<p class="no-layers">No images uploaded</p>';
+  if (!list) return;
+
+  const drawingLayers = drawingLayerRegistry.getLayers();
+  const hasImages = imageLayers.length > 0;
+  const hasDrawings = drawingLayers.length > 0;
+
+  if (!hasImages && !hasDrawings) {
+    list.innerHTML = '<p class="no-layers">No layers yet</p>';
     return;
   }
-  
+
   list.innerHTML = '';
-  
-  [...imageLayers].reverse().forEach((layer, index) => {
+
+  drawingLayers.forEach((layer) => {
+    const div = document.createElement('div');
+    div.className = 'layer-item drawing-layer';
+    div.onclick = () => drawingLayerRegistry.focusLayer(layer.id);
+
+    const preview = document.createElement('div');
+    preview.className = 'layer-preview drawing-preview';
+    preview.textContent = layer.icon || '✏️';
+    div.appendChild(preview);
+
+    const info = document.createElement('div');
+    info.className = 'layer-info';
+
+    const name = document.createElement('div');
+    name.className = 'layer-name';
+    name.textContent = layer.name;
+    info.appendChild(name);
+
+    if (layer.origin) {
+      const meta = document.createElement('div');
+      meta.className = 'layer-meta';
+      meta.textContent = layer.origin;
+      info.appendChild(meta);
+    }
+
+    div.appendChild(info);
+
+    const controls = document.createElement('div');
+    controls.className = 'layer-controls';
+
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'layer-btn';
+    removeBtn.textContent = '×';
+    removeBtn.title = 'Remove drawing';
+    removeBtn.onclick = (event) => removeDrawingLayer(layer.id, event);
+    controls.appendChild(removeBtn);
+
+    div.appendChild(controls);
+    list.appendChild(div);
+  });
+
+  [...imageLayers].reverse().forEach((layer) => {
     const div = document.createElement('div');
     div.className = `layer-item ${selectedLayerId === layer.id ? 'active' : ''}`;
     div.onclick = () => selectLayer(layer.id);
-    
+
     const canvas = document.createElement('canvas');
     canvas.width = 40;
     canvas.height = 40;
     const ctx = canvas.getContext('2d');
-    
+
     const scale = Math.min(40 / layer.image.width, 40 / layer.image.height);
     const w = layer.image.width * scale;
     const h = layer.image.height * scale;
     ctx.drawImage(layer.image, (40 - w) / 2, (40 - h) / 2, w, h);
-    
+
     div.innerHTML = `
       <span class="layer-visibility" onclick="toggleLayerVisibility(${layer.id}, event)" title="${layer.visible ? 'Hide' : 'Show'}">
         ${layer.visible ? '👁️' : '🚫'}
@@ -311,18 +718,18 @@ function updateLayersList() {
       <div class="layer-controls">
         <div class="layer-control-row">
           <span class="control-label">Opacity:</span>
-          <input type="range" min="0" max="100" value="${layer.opacity * 100}" 
-                 onchange="updateLayerOpacity(${layer.id}, this.value)" 
+          <input type="range" min="0" max="100" value="${layer.opacity * 100}"
+                 onchange="updateLayerOpacity(${layer.id}, this.value)"
                  oninput="updateLayerOpacity(${layer.id}, this.value)"
-                 onclick="event.stopPropagation()" 
+                 onclick="event.stopPropagation()"
                  title="Opacity: ${Math.round(layer.opacity * 100)}%"/>
         </div>
         <div class="layer-control-row">
           <span class="control-label">Scale:</span>
-          <input type="range" min="10" max="300" value="${layer.scale * 100}" 
-                 onchange="updateLayerScale(${layer.id}, this.value)" 
+          <input type="range" min="10" max="300" value="${layer.scale * 100}"
+                 onchange="updateLayerScale(${layer.id}, this.value)"
                  oninput="updateLayerScale(${layer.id}, this.value)"
-                 onclick="event.stopPropagation()" 
+                 onclick="event.stopPropagation()"
                  title="Scale: ${Math.round(layer.scale * 100)}%"/>
         </div>
         <div class="layer-control-row">
@@ -340,9 +747,17 @@ function updateLayersList() {
         </div>
       </div>
     `;
-    
+
     list.appendChild(div);
   });
+}
+
+function removeDrawingLayer(layerId, event) {
+  if (event) {
+    event.stopPropagation();
+    event.preventDefault();
+  }
+  drawingLayerRegistry.removeLayer(layerId);
 }
 
 function selectLayer(layerId) {

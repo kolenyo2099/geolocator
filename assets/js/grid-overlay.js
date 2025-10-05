@@ -77,11 +77,27 @@
     }
   }
 
+  const toggleBtn = document.getElementById('mapGridToggle');
+  const sizeInput = document.getElementById('mapGridSize');
+
+  function syncUI() {
+    if (toggleBtn) {
+      toggleBtn.textContent = gridEnabled ? 'Hide Grid' : 'Show Grid';
+      toggleBtn.classList.toggle('active', gridEnabled);
+      toggleBtn.setAttribute('aria-pressed', gridEnabled ? 'true' : 'false');
+    }
+
+    if (sizeInput && document.activeElement !== sizeInput) {
+      sizeInput.value = formatInputValue(gridSizeKm);
+    }
+  }
+
   function enableGrid() {
     if (!gridEnabled) {
       gridEnabled = true;
       gridLayer.addTo(map);
       updateGrid();
+      syncUI();
     }
   }
 
@@ -90,63 +106,49 @@
       gridEnabled = false;
       gridLayer.clearLayers();
       map.removeLayer(gridLayer);
+      syncUI();
     }
   }
 
-  function toggleGrid(button) {
-    if (gridEnabled) {
-      disableGrid();
-      button.classList.remove('active');
-      button.innerText = 'Show Grid';
-    } else {
+  function setGridEnabled(nextEnabled) {
+    if (nextEnabled) {
       enableGrid();
-      button.classList.add('active');
-      button.innerText = 'Hide Grid';
+    } else {
+      disableGrid();
     }
   }
 
-  const GridOverlayControl = L.Control.extend({
-    options: { position: 'topright' },
-    onAdd() {
-      const container = L.DomUtil.create('div', 'leaflet-control grid-overlay-control');
+  if (toggleBtn) {
+    toggleBtn.addEventListener('click', function() {
+      setGridEnabled(!gridEnabled);
+    });
+  } else {
+    console.warn('Map grid toggle button not found in sidebar.');
+  }
 
-      const title = L.DomUtil.create('div', 'grid-overlay-title', container);
-      title.textContent = 'Map Grid';
+  if (sizeInput) {
+    const initialValue = clampGridSize(parseFloat(sizeInput.value));
+    gridSizeKm = initialValue;
+    sizeInput.value = formatInputValue(gridSizeKm);
 
-      const sizeWrapper = L.DomUtil.create('label', 'grid-overlay-size', container);
-      sizeWrapper.textContent = 'Cell size (km)';
-
-      const sizeInput = L.DomUtil.create('input', 'grid-overlay-input', sizeWrapper);
-      sizeInput.type = 'number';
-      sizeInput.min = GRID_MIN_KM;
-      sizeInput.step = '0.1';
+    const commitSize = function() {
+      const parsed = parseFloat(sizeInput.value);
+      const newValue = clampGridSize(parsed);
+      const changed = newValue !== gridSizeKm;
+      gridSizeKm = newValue;
       sizeInput.value = formatInputValue(gridSizeKm);
+      syncUI();
+      if (changed && gridEnabled) {
+        updateGrid();
+      }
+    };
 
-      const toggleBtn = L.DomUtil.create('button', 'grid-overlay-toggle', container);
-      toggleBtn.type = 'button';
-      toggleBtn.textContent = 'Show Grid';
-
-      L.DomEvent.disableClickPropagation(container);
-      L.DomEvent.disableScrollPropagation(container);
-
-      L.DomEvent.on(toggleBtn, 'click', function() {
-        toggleGrid(toggleBtn);
-      });
-
-      L.DomEvent.on(sizeInput, 'change', function() {
-        const newValue = clampGridSize(parseFloat(sizeInput.value));
-        gridSizeKm = newValue;
-        sizeInput.value = formatInputValue(newValue);
-        if (gridEnabled) {
-          updateGrid();
-        }
-      });
-
-      return container;
-    }
-  });
-
-  map.addControl(new GridOverlayControl());
+    sizeInput.addEventListener('change', commitSize);
+    sizeInput.addEventListener('blur', commitSize);
+  } else {
+    console.warn('Map grid size input not found in sidebar.');
+  }
 
   map.on('moveend zoomend rotate', updateGrid);
+  syncUI();
 })();
