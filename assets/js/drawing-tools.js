@@ -156,11 +156,17 @@ class KonvaPanel {
     });
 
     shape.on('click tap', (evt) => {
-      if (this.router.state.tool !== 'pan') return;
+      const pendingSunAssignment = this.router && typeof this.router.hasPendingSunAssignment === 'function'
+        ? this.router.hasPendingSunAssignment()
+        : false;
+      if (!pendingSunAssignment && this.router.state.tool !== 'pan') return;
       evt.cancelBubble = true;
       this.transformer.nodes([shape]);
       this.activeShape = shape;
       this.layer.batchDraw();
+      if (this.router && typeof this.router.handleShapeSelection === 'function') {
+        this.router.handleShapeSelection(this.key, shape);
+      }
     });
 
     if (shape.getAttr('shapeType') === 'arrow') {
@@ -426,6 +432,15 @@ class KonvaPanel {
       if (pos && typeof createStickyNote === 'function') {
         createStickyNote(pos.x, pos.y, this.container);
       }
+      return;
+    }
+
+    const hasPendingSunAssignment = this.router && typeof this.router.hasPendingSunAssignment === 'function'
+      ? this.router.hasPendingSunAssignment()
+      : false;
+
+    if (hasPendingSunAssignment && evt.target !== this.stage) {
+      evt.cancelBubble = true;
       return;
     }
 
@@ -1354,7 +1369,8 @@ class DrawingRouter {
       ground: null,
       lastAngle: null,
       lastComputation: null,
-      warnings: []
+      warnings: [],
+      pendingRole: null
     };
   }
 
@@ -1664,27 +1680,25 @@ class DrawingRouter {
     const panelKey = selection?.key;
     const panel = selection?.panel || (panelKey ? this.konvaManager.getPanel(panelKey) : null);
     const shape = selection?.shape || (panel && typeof panel.getActiveShape === 'function' ? panel.getActiveShape() : panel?.activeShape);
+    let assigned = false;
+    if (panel && shape) {
+      assigned = this.tryAssignSunRole(role, shape, panelKey);
+      if (assigned) {
+        return;
+      }
+    }
+
+    this.sunMeasurement.pendingRole = role;
 
     if (!panel || !shape) {
-      this.sunMeasurement.warnings = [`Select an arrow and try assigning it as the ${role}.`];
+      const label = role === 'height' ? 'height' : 'shadow';
+      this.sunMeasurement.warnings = [`Click an arrow to assign it as the ${label} measurement.`];
       this.updateSunMeasurementUI();
-      return;
     }
+  }
 
-    if (!shape || shape.getAttr('shapeType') !== 'arrow') {
-      this.sunMeasurement.warnings = ['Only arrow measurements can be marked as height or shadow.'];
-      this.updateSunMeasurementUI();
-      return;
-    }
-
-    if (this.sunMeasurement.panelKey && this.sunMeasurement.panelKey !== panelKey) {
-      this.clearSunMeasurements({ silent: true });
-    }
-
-    this.sunMeasurement.panelKey = panelKey;
-    this.assignSunRole(role, shape, panelKey);
-    this.sunMeasurement.warnings = [];
-    this.calculateSunElevation({ auto: true });
+  hasPendingSunAssignment() {
+    return Boolean(this.sunMeasurement.pendingRole);
   }
 
   setSunGroundPlane() {
@@ -1720,9 +1734,61 @@ class DrawingRouter {
     }
 
     this.sunMeasurement.panelKey = panelKey;
+    this.sunMeasurement.pendingRole = null;
     this.assignSunRole('ground', shape, panelKey);
     this.sunMeasurement.warnings = [];
     this.calculateSunElevation({ auto: true });
+  }
+
+  handleShapeSelection(panelKey, shape) {
+    if (!shape) return;
+    if (!this.sunMeasurement.pendingRole) return;
+    const role = this.sunMeasurement.pendingRole;
+    const assigned = this.tryAssignSunRole(role, shape, panelKey);
+    if (!assigned) {
+      this.sunMeasurement.pendingRole = role;
+    }
+  }
+
+  tryAssignSunRole(role, shape, panelKey) {
+    if (!shape || typeof shape.getAttr !== 'function') return false;
+
+    if (shape.getAttr('shapeType') !== 'arrow') {
+      this.sunMeasurement.warnings = ['Only arrow measurements can be marked as height or shadow.'];
+      this.updateSunMeasurementUI();
+      return false;
+    }
+
+    const existing = this.sunMeasurement[role];
+    if (existing && existing.shape === shape && !isShapeDestroyed(shape)) {
+      if (panelKey) {
+        this.sunMeasurement.panelKey = panelKey;
+      }
+      this.sunMeasurement.pendingRole = null;
+      this.sunMeasurement.warnings = [];
+      this.calculateSunElevation({ auto: true });
+      return true;
+    }
+
+    const otherRole = role === 'height' ? 'shadow' : 'height';
+    const otherEntry = this.sunMeasurement[otherRole];
+    if (otherEntry && otherEntry.shape && !isShapeDestroyed(otherEntry.shape) && otherEntry.shape === shape) {
+      const label = role === 'height' ? 'height' : 'shadow';
+      this.sunMeasurement.warnings = [`Select a different arrow for the ${label} measurement.`];
+      this.updateSunMeasurementUI();
+      return false;
+    }
+
+    if (this.sunMeasurement.panelKey && this.sunMeasurement.panelKey !== panelKey) {
+      this.clearSunMeasurements({ silent: true });
+    }
+
+    this.sunMeasurement.panelKey = panelKey;
+    this.assignSunRole(role, shape, panelKey);
+    this.sunMeasurement.pendingRole = null;
+    this.sunMeasurement.warnings = [];
+    this.calculateSunElevation({ auto: true });
+    return true;
   }
 
   assignSunRole(role, shape, panelKey) {
@@ -1775,6 +1841,10 @@ class DrawingRouter {
     }
     this.sunMeasurement[role] = null;
 
+    if (this.sunMeasurement.pendingRole === role) {
+      this.sunMeasurement.pendingRole = null;
+    }
+
     if (!this.sunMeasurement.height && !this.sunMeasurement.shadow && !this.sunMeasurement.ground) {
       this.sunMeasurement.panelKey = null;
     }
@@ -1793,6 +1863,7 @@ class DrawingRouter {
     this.sunMeasurement.lastAngle = null;
     this.sunMeasurement.lastComputation = null;
     this.sunMeasurement.warnings = [];
+    this.sunMeasurement.pendingRole = null;
     if (!silent) {
       this.updateSunMeasurementUI();
     }
