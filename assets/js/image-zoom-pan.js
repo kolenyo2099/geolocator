@@ -77,6 +77,7 @@ imageContainer.addEventListener('dblclick', (e) => {
 
 function updateImageTransform() {
   redrawAllLayers();
+  syncImageOverlay();
 }
 
 function resetImageZoom() {
@@ -84,4 +85,19 @@ function resetImageZoom() {
   imagePanX = 0;
   imagePanY = 0;
   redrawAllLayers();
+  syncImageOverlay();
 }
+
+function syncImageOverlay() {
+  if (!window.drawingRouter || !drawingRouter.konvaManager) return;
+  const panel = drawingRouter.konvaManager.getPanel('image');
+  if (!panel || typeof panel.applyViewportTransform !== 'function') return;
+  panel.applyViewportTransform({
+    scaleX: imageZoom,
+    scaleY: imageZoom,
+    translateX: imagePanX,
+    translateY: imagePanY
+  });
+}
+
+syncImageOverlay();
