@@ -59,6 +59,13 @@ class KonvaPanel {
     this.layer = new Konva.Layer();
     this.stage.add(this.layer);
 
+    this.viewportTransform = {
+      scaleX: 1,
+      scaleY: 1,
+      translateX: 0,
+      translateY: 0
+    };
+
     this.transformer = new Konva.Transformer({
       rotateEnabled: true,
       rotateAnchorOffset: 30,
@@ -149,11 +156,17 @@ class KonvaPanel {
     });
 
     shape.on('click tap', (evt) => {
-      if (this.router.state.tool !== 'pan') return;
+      const pendingSunAssignment = this.router && typeof this.router.hasPendingSunAssignment === 'function'
+        ? this.router.hasPendingSunAssignment()
+        : false;
+      if (!pendingSunAssignment && this.router.state.tool !== 'pan') return;
       evt.cancelBubble = true;
       this.transformer.nodes([shape]);
       this.activeShape = shape;
       this.layer.batchDraw();
+      if (this.router && typeof this.router.handleShapeSelection === 'function') {
+        this.router.handleShapeSelection(this.key, shape);
+      }
     });
 
     if (shape.getAttr('shapeType') === 'arrow') {
@@ -316,9 +329,24 @@ class KonvaPanel {
   }
 
   getPointerPosition(evt) {
-    const stage = evt.target.getStage();
+    const stage = evt && typeof evt.target?.getStage === 'function'
+      ? evt.target.getStage()
+      : this.stage;
     if (!stage) return null;
-    return stage.getPointerPosition();
+
+    const pointer = stage.getPointerPosition();
+    if (!pointer) return null;
+
+    const transform = this.viewportTransform || {};
+    const scaleX = transform.scaleX || 1;
+    const scaleY = transform.scaleY || 1;
+    const translateX = transform.translateX || 0;
+    const translateY = transform.translateY || 0;
+
+    return {
+      x: (pointer.x - translateX) / scaleX,
+      y: (pointer.y - translateY) / scaleY
+    };
   }
 
   styleAttributes() {
@@ -404,6 +432,15 @@ class KonvaPanel {
       if (pos && typeof createStickyNote === 'function') {
         createStickyNote(pos.x, pos.y, this.container);
       }
+      return;
+    }
+
+    const hasPendingSunAssignment = this.router && typeof this.router.hasPendingSunAssignment === 'function'
+      ? this.router.hasPendingSunAssignment()
+      : false;
+
+    if (hasPendingSunAssignment && evt.target !== this.stage) {
+      evt.cancelBubble = true;
       return;
     }
 
@@ -556,6 +593,51 @@ class KonvaPanel {
     this.transformer.nodes([]);
     this.activeShape = null;
     this.layer.batchDraw();
+  }
+
+  getActiveShape() {
+    if (this.activeShape && !isShapeDestroyed(this.activeShape)) {
+      return this.activeShape;
+    }
+
+    if (this.transformer && typeof this.transformer.nodes === 'function') {
+      const nodes = this.transformer.nodes();
+      if (Array.isArray(nodes)) {
+        for (const node of nodes) {
+          if (node && !isShapeDestroyed(node)) {
+            this.activeShape = node;
+            return node;
+          }
+        }
+      }
+    }
+
+    return null;
+  }
+
+  applyViewportTransform(transform = {}) {
+    if (!this.stage) return;
+
+    const next = {
+      scaleX: typeof transform.scaleX === 'number' ? transform.scaleX : (typeof transform.scale === 'number' ? transform.scale : this.viewportTransform.scaleX),
+      scaleY: typeof transform.scaleY === 'number' ? transform.scaleY : (typeof transform.scale === 'number' ? transform.scale : this.viewportTransform.scaleY),
+      translateX: typeof transform.translateX === 'number' ? transform.translateX : (typeof transform.x === 'number' ? transform.x : this.viewportTransform.translateX),
+      translateY: typeof transform.translateY === 'number' ? transform.translateY : (typeof transform.y === 'number' ? transform.y : this.viewportTransform.translateY)
+    };
+
+    const changed =
+      next.scaleX !== this.viewportTransform.scaleX ||
+      next.scaleY !== this.viewportTransform.scaleY ||
+      next.translateX !== this.viewportTransform.translateX ||
+      next.translateY !== this.viewportTransform.translateY;
+
+    if (!changed) return;
+
+    this.viewportTransform = next;
+
+    this.stage.scale({ x: next.scaleX, y: next.scaleY });
+    this.stage.position({ x: next.translateX, y: next.translateY });
+    this.stage.batchDraw();
   }
 
   forwardPointerEvent(type, evt) {
@@ -976,8 +1058,22 @@ class KonvaPanel {
     const label = marker.label;
     if (!arc || !label) return;
 
+    const toStagePoint = (point) => {
+      if (!point || !this.stage || typeof this.stage.getAbsoluteTransform !== 'function') {
+        return point;
+      }
+      const absolute = this.stage.getAbsoluteTransform();
+      if (!absolute || typeof absolute.copy !== 'function') return point;
+      const inverse = absolute.copy().invert();
+      if (!inverse || typeof inverse.point !== 'function') return point;
+      return inverse.point(point);
+    };
+
+    const stagePoint = toStagePoint(geometry.point);
+    if (!stagePoint) return;
+
     arc.stroke(color);
-    arc.position({ x: geometry.point.x, y: geometry.point.y });
+    arc.position({ x: stagePoint.x, y: stagePoint.y });
     arc.rotation(geometry.rotation);
     arc.angle(geometry.sweep);
     arc.visible(true);
@@ -986,8 +1082,8 @@ class KonvaPanel {
     const midRad = (geometry.midAngle * Math.PI) / 180;
     const text = this.formatAngleText(geometry.angle);
     const labelPos = {
-      x: geometry.point.x + Math.cos(midRad) * labelRadius,
-      y: geometry.point.y + Math.sin(midRad) * labelRadius
+      x: stagePoint.x + Math.cos(midRad) * labelRadius,
+      y: stagePoint.y + Math.sin(midRad) * labelRadius
     };
 
     label.text(text);
@@ -1230,6 +1326,31 @@ class KonvaManager {
     this.panels.forEach(panel => panel.clearSelection());
   }
 
+  getSelection() {
+    const orderedKeys = [];
+    if (this.activePanel) {
+      orderedKeys.push(this.activePanel);
+    }
+    this.panels.forEach((_, key) => {
+      if (!orderedKeys.includes(key)) {
+        orderedKeys.push(key);
+      }
+    });
+
+    for (const key of orderedKeys) {
+      const panel = this.panels.get(key);
+      if (!panel) continue;
+      const shape = typeof panel.getActiveShape === 'function'
+        ? panel.getActiveShape()
+        : panel.activeShape;
+      if (shape && !isShapeDestroyed(shape)) {
+        return { key, panel, shape };
+      }
+    }
+
+    return null;
+  }
+
   getPanel(key) {
     return this.panels.get(key);
   }
@@ -1262,7 +1383,8 @@ class DrawingRouter {
       ground: null,
       lastAngle: null,
       lastComputation: null,
-      warnings: []
+      warnings: [],
+      pendingRole: null
     };
   }
 
@@ -1566,41 +1688,68 @@ class DrawingRouter {
 
   setSunMeasurementRole(role) {
     if (!['height', 'shadow'].includes(role)) return;
-    const panelKey = this.konvaManager.activePanel;
-    const panel = panelKey ? this.konvaManager.getPanel(panelKey) : null;
-    if (!panel || !panel.activeShape) {
-      this.sunMeasurement.warnings = [`Select an arrow and try assigning it as the ${role}.`];
+    const selection = typeof this.konvaManager.getSelection === 'function'
+      ? this.konvaManager.getSelection()
+      : null;
+    const panelKey = selection?.key;
+    const panel = selection?.panel || (panelKey ? this.konvaManager.getPanel(panelKey) : null);
+    const shape = selection?.shape || (panel && typeof panel.getActiveShape === 'function' ? panel.getActiveShape() : panel?.activeShape);
+    const existingEntry = this.sunMeasurement[role];
+    const existingShape = existingEntry?.shape;
+    const selectingExisting = panel && shape && existingShape && !isShapeDestroyed(existingShape) && shapesMatch(existingShape, shape);
+    let assigned = false;
+
+    if (selectingExisting) {
+      const label = role === 'height' ? 'height' : 'shadow';
+      this.sunMeasurement.pendingRole = role;
+      this.sunMeasurement.warnings = [`Select a different arrow to reassign the ${label} measurement.`];
+      if (this.konvaManager && typeof this.konvaManager.clearSelections === 'function') {
+        this.konvaManager.clearSelections();
+      }
       this.updateSunMeasurementUI();
       return;
     }
 
-    const shape = panel.activeShape;
-    if (!shape || shape.getAttr('shapeType') !== 'arrow') {
-      this.sunMeasurement.warnings = ['Only arrow measurements can be marked as height or shadow.'];
+    if (panel && shape) {
+      assigned = this.tryAssignSunRole(role, shape, panelKey);
+      if (assigned) {
+        return;
+      }
+
+      const otherRole = role === 'height' ? 'shadow' : 'height';
+      const otherShape = this.sunMeasurement[otherRole]?.shape;
+      if (shapesMatch(otherShape, shape) && this.konvaManager && typeof this.konvaManager.clearSelections === 'function') {
+        this.konvaManager.clearSelections();
+      }
+    }
+
+    this.sunMeasurement.pendingRole = role;
+
+    if (!panel || !shape) {
+      const label = role === 'height' ? 'height' : 'shadow';
+      this.sunMeasurement.warnings = [`Click an arrow to assign it as the ${label} measurement.`];
       this.updateSunMeasurementUI();
-      return;
     }
+  }
 
-    if (this.sunMeasurement.panelKey && this.sunMeasurement.panelKey !== panelKey) {
-      this.clearSunMeasurements({ silent: true });
-    }
-
-    this.sunMeasurement.panelKey = panelKey;
-    this.assignSunRole(role, shape, panelKey);
-    this.sunMeasurement.warnings = [];
-    this.calculateSunElevation({ auto: true });
+  hasPendingSunAssignment() {
+    return Boolean(this.sunMeasurement.pendingRole);
   }
 
   setSunGroundPlane() {
-    const panelKey = this.konvaManager.activePanel;
-    const panel = panelKey ? this.konvaManager.getPanel(panelKey) : null;
-    if (!panel || !panel.activeShape) {
+    const selection = typeof this.konvaManager.getSelection === 'function'
+      ? this.konvaManager.getSelection()
+      : null;
+    const panelKey = selection?.key;
+    const panel = selection?.panel || (panelKey ? this.konvaManager.getPanel(panelKey) : null);
+    const shape = selection?.shape || (panel && typeof panel.getActiveShape === 'function' ? panel.getActiveShape() : panel?.activeShape);
+
+    if (!panel || !shape) {
       this.sunMeasurement.warnings = ['Select a polygon that represents the ground plane before assigning it.'];
       this.updateSunMeasurementUI();
       return;
     }
 
-    const shape = panel.activeShape;
     const type = shape.getAttr('shapeType');
     if (!['polygon', 'freehand', 'line'].includes(type)) {
       this.sunMeasurement.warnings = ['Ground plane correction requires a four-corner polygon.'];
@@ -1620,9 +1769,72 @@ class DrawingRouter {
     }
 
     this.sunMeasurement.panelKey = panelKey;
+    this.sunMeasurement.pendingRole = null;
     this.assignSunRole('ground', shape, panelKey);
     this.sunMeasurement.warnings = [];
     this.calculateSunElevation({ auto: true });
+  }
+
+  handleShapeSelection(panelKey, shape) {
+    if (!shape) return;
+    if (!this.sunMeasurement.pendingRole) return;
+    const role = this.sunMeasurement.pendingRole;
+    const assigned = this.tryAssignSunRole(role, shape, panelKey);
+    if (!assigned) {
+      this.sunMeasurement.pendingRole = role;
+    }
+  }
+
+  tryAssignSunRole(role, shape, panelKey) {
+    if (!shape || typeof shape.getAttr !== 'function') return false;
+
+    if (shape.getAttr('shapeType') !== 'arrow') {
+      this.sunMeasurement.warnings = ['Only arrow measurements can be marked as height or shadow.'];
+      this.updateSunMeasurementUI();
+      return false;
+    }
+
+    const currentAssignment = shape.getAttr('sunAssignmentRole');
+    if (currentAssignment && currentAssignment !== role) {
+      const currentLabel = currentAssignment === 'height' ? 'height' : 'shadow';
+      const desiredLabel = role === 'height' ? 'height' : 'shadow';
+      this.sunMeasurement.warnings = [`This arrow is already marked as the ${currentLabel} measurement. Select a different arrow for the ${desiredLabel} measurement.`];
+      this.updateSunMeasurementUI();
+      return false;
+    }
+
+    const existing = this.sunMeasurement[role];
+    const sameExisting = existing && existing.shape && !isShapeDestroyed(existing.shape) && shapesMatch(existing.shape, shape);
+    if (sameExisting) {
+      if (panelKey) {
+        this.sunMeasurement.panelKey = panelKey;
+      }
+      this.sunMeasurement.pendingRole = null;
+      this.sunMeasurement.warnings = [];
+      this.calculateSunElevation({ auto: true });
+      return true;
+    }
+
+    const otherRole = role === 'height' ? 'shadow' : 'height';
+    const otherEntry = this.sunMeasurement[otherRole];
+    const sameAsOther = otherEntry && otherEntry.shape && !isShapeDestroyed(otherEntry.shape) && shapesMatch(otherEntry.shape, shape);
+    if (sameAsOther) {
+      const label = role === 'height' ? 'height' : 'shadow';
+      this.sunMeasurement.warnings = [`Select a different arrow for the ${label} measurement.`];
+      this.updateSunMeasurementUI();
+      return false;
+    }
+
+    if (this.sunMeasurement.panelKey && this.sunMeasurement.panelKey !== panelKey) {
+      this.clearSunMeasurements({ silent: true });
+    }
+
+    this.sunMeasurement.panelKey = panelKey;
+    this.assignSunRole(role, shape, panelKey);
+    this.sunMeasurement.pendingRole = null;
+    this.sunMeasurement.warnings = [];
+    this.calculateSunElevation({ auto: true });
+    return true;
   }
 
   assignSunRole(role, shape, panelKey) {
@@ -1640,7 +1852,7 @@ class DrawingRouter {
 
     const entry = { shape, panelKey, listeners: [] };
     const destroyHandler = () => {
-      if (this.sunMeasurement[role] && this.sunMeasurement[role].shape === shape) {
+      if (this.sunMeasurement[role] && shapesMatch(this.sunMeasurement[role].shape, shape)) {
         this.clearSunRole(role, { silent: true });
         this.calculateSunElevation({ auto: true });
       }
@@ -1675,6 +1887,10 @@ class DrawingRouter {
     }
     this.sunMeasurement[role] = null;
 
+    if (this.sunMeasurement.pendingRole === role) {
+      this.sunMeasurement.pendingRole = null;
+    }
+
     if (!this.sunMeasurement.height && !this.sunMeasurement.shadow && !this.sunMeasurement.ground) {
       this.sunMeasurement.panelKey = null;
     }
@@ -1693,6 +1909,7 @@ class DrawingRouter {
     this.sunMeasurement.lastAngle = null;
     this.sunMeasurement.lastComputation = null;
     this.sunMeasurement.warnings = [];
+    this.sunMeasurement.pendingRole = null;
     if (!silent) {
       this.updateSunMeasurementUI();
     }
@@ -1700,8 +1917,8 @@ class DrawingRouter {
 
   handleArrowMeasurementUpdate(panelKey, shape) {
     const { height, shadow } = this.sunMeasurement;
-    const matchesHeight = height && height.shape === shape;
-    const matchesShadow = shadow && shadow.shape === shape;
+    const matchesHeight = height && shapesMatch(height.shape, shape);
+    const matchesShadow = shadow && shapesMatch(shadow.shape, shape);
     if (!matchesHeight && !matchesShadow) return;
     if (this.sunMeasurement.panelKey && panelKey && this.sunMeasurement.panelKey !== panelKey) return;
     if (!this.sunMeasurement.panelKey) {
@@ -1715,7 +1932,7 @@ class DrawingRouter {
     let affected = false;
     ['height', 'shadow', 'ground'].forEach(role => {
       const entry = this.sunMeasurement[role];
-      if (entry && entry.shape === shape) {
+      if (entry && shapesMatch(entry.shape, shape)) {
         this.clearSunRole(role, { silent: true });
         affected = true;
       }
@@ -2067,6 +2284,17 @@ class DrawingRouter {
 
 function isShapeDestroyed(shape) {
   return Boolean(shape && typeof shape.isDestroyed === 'function' && shape.isDestroyed());
+}
+
+function shapesMatch(a, b) {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const idA = typeof a._id === 'number' ? a._id : (typeof a.getAttr === 'function' ? Number(a.getAttr('_id')) : NaN);
+  const idB = typeof b._id === 'number' ? b._id : (typeof b.getAttr === 'function' ? Number(b.getAttr('_id')) : NaN);
+  if (Number.isFinite(idA) && Number.isFinite(idB)) {
+    return idA === idB;
+  }
+  return false;
 }
 
 function distanceBetweenPoints(a, b) {
