@@ -1700,6 +1700,12 @@ class DrawingRouter {
       if (assigned) {
         return;
       }
+
+      const otherRole = role === 'height' ? 'shadow' : 'height';
+      const otherShape = this.sunMeasurement[otherRole]?.shape;
+      if (shapesMatch(otherShape, shape) && this.konvaManager && typeof this.konvaManager.clearSelections === 'function') {
+        this.konvaManager.clearSelections();
+      }
     }
 
     this.sunMeasurement.pendingRole = role;
@@ -1773,9 +1779,17 @@ class DrawingRouter {
       return false;
     }
 
+    const currentAssignment = shape.getAttr('sunAssignmentRole');
+    if (currentAssignment && currentAssignment !== role) {
+      const currentLabel = currentAssignment === 'height' ? 'height' : 'shadow';
+      const desiredLabel = role === 'height' ? 'height' : 'shadow';
+      this.sunMeasurement.warnings = [`This arrow is already marked as the ${currentLabel} measurement. Select a different arrow for the ${desiredLabel} measurement.`];
+      this.updateSunMeasurementUI();
+      return false;
+    }
+
     const existing = this.sunMeasurement[role];
-    const sameExisting = existing && existing.shape && !isShapeDestroyed(existing.shape) &&
-      (existing.shape === shape || existing.shape._id === shape._id);
+    const sameExisting = existing && existing.shape && !isShapeDestroyed(existing.shape) && shapesMatch(existing.shape, shape);
     if (sameExisting) {
       if (panelKey) {
         this.sunMeasurement.panelKey = panelKey;
@@ -1788,8 +1802,7 @@ class DrawingRouter {
 
     const otherRole = role === 'height' ? 'shadow' : 'height';
     const otherEntry = this.sunMeasurement[otherRole];
-    const sameAsOther = otherEntry && otherEntry.shape && !isShapeDestroyed(otherEntry.shape) &&
-      (otherEntry.shape === shape || otherEntry.shape._id === shape._id);
+    const sameAsOther = otherEntry && otherEntry.shape && !isShapeDestroyed(otherEntry.shape) && shapesMatch(otherEntry.shape, shape);
     if (sameAsOther) {
       const label = role === 'height' ? 'height' : 'shadow';
       this.sunMeasurement.warnings = [`Select a different arrow for the ${label} measurement.`];
@@ -1824,7 +1837,7 @@ class DrawingRouter {
 
     const entry = { shape, panelKey, listeners: [] };
     const destroyHandler = () => {
-      if (this.sunMeasurement[role] && this.sunMeasurement[role].shape === shape) {
+      if (this.sunMeasurement[role] && shapesMatch(this.sunMeasurement[role].shape, shape)) {
         this.clearSunRole(role, { silent: true });
         this.calculateSunElevation({ auto: true });
       }
@@ -1889,8 +1902,8 @@ class DrawingRouter {
 
   handleArrowMeasurementUpdate(panelKey, shape) {
     const { height, shadow } = this.sunMeasurement;
-    const matchesHeight = height && height.shape === shape;
-    const matchesShadow = shadow && shadow.shape === shape;
+    const matchesHeight = height && shapesMatch(height.shape, shape);
+    const matchesShadow = shadow && shapesMatch(shadow.shape, shape);
     if (!matchesHeight && !matchesShadow) return;
     if (this.sunMeasurement.panelKey && panelKey && this.sunMeasurement.panelKey !== panelKey) return;
     if (!this.sunMeasurement.panelKey) {
@@ -1904,7 +1917,7 @@ class DrawingRouter {
     let affected = false;
     ['height', 'shadow', 'ground'].forEach(role => {
       const entry = this.sunMeasurement[role];
-      if (entry && entry.shape === shape) {
+      if (entry && shapesMatch(entry.shape, shape)) {
         this.clearSunRole(role, { silent: true });
         affected = true;
       }
@@ -2256,6 +2269,17 @@ class DrawingRouter {
 
 function isShapeDestroyed(shape) {
   return Boolean(shape && typeof shape.isDestroyed === 'function' && shape.isDestroyed());
+}
+
+function shapesMatch(a, b) {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const idA = typeof a._id === 'number' ? a._id : (typeof a.getAttr === 'function' ? Number(a.getAttr('_id')) : NaN);
+  const idB = typeof b._id === 'number' ? b._id : (typeof b.getAttr === 'function' ? Number(b.getAttr('_id')) : NaN);
+  if (Number.isFinite(idA) && Number.isFinite(idB)) {
+    return idA === idB;
+  }
+  return false;
 }
 
 function distanceBetweenPoints(a, b) {
