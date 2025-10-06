@@ -486,6 +486,49 @@
             <button class="tool-btn" onclick="undoLast()">↶ Undo</button>
             <button class="tool-btn" onclick="clearAll()">🗑️ Clear</button>
           </div>
+          <div class="toolbar-section">
+            <button class="tool-btn" id="sunToolsToggle" type="button" onclick="toggleSunToolsPanel()" aria-expanded="false">
+              ☀️ Sun Tools
+            </button>
+          </div>
+        </div>
+
+        <div class="sun-tools-panel" id="sunToolsPanel" aria-hidden="true">
+          <div class="sun-tools-header">
+            <div class="sun-tools-title">
+              <h4>Sun Elevation (Advanced)</h4>
+              <p>Mark height and shadow measurements to estimate the sun elevation. Assign a ground plane if you need perspective correction.</p>
+            </div>
+            <button class="sun-tools-close" type="button" onclick="toggleSunToolsPanel(false)" aria-label="Close sun tools">×</button>
+          </div>
+          <div class="sun-tools-body">
+            <div class="sun-tools-assignments">
+              <button type="button" class="sun-tools-btn" onclick="setSunMeasurementRole('height')">Mark Height Arrow</button>
+              <button type="button" class="sun-tools-btn" onclick="setSunMeasurementRole('shadow')">Mark Shadow Arrow</button>
+              <button type="button" class="sun-tools-btn" onclick="setSunGroundPlane()">Assign Ground Plane</button>
+            </div>
+            <div class="sun-tools-readouts">
+              <div id="sunHeightAssignment">Height arrow: —</div>
+              <div id="sunShadowAssignment">Shadow arrow: —</div>
+              <div id="sunPerspectiveStatus">Perspective correction: Off</div>
+            </div>
+            <label class="sun-tools-input" for="sunActualHeight">
+              <span>Actual object height (optional)</span>
+              <input type="number" id="sunActualHeight" min="0" step="0.01" placeholder="Enter known height"/>
+            </label>
+            <div class="sun-tools-actions">
+              <button type="button" class="sun-tools-btn primary" onclick="calculateSunElevation()">Compute Angle</button>
+              <div class="sun-tools-angle">
+                <span>Sun elevation</span>
+                <strong id="sunAngleValue">—</strong>
+              </div>
+              <button type="button" class="sun-tools-btn subtle" onclick="clearSunMeasurements()">Reset</button>
+            </div>
+            <div class="sun-tools-warnings" role="status">
+              <h5>Notes</h5>
+              <ul id="sunWarnings"></ul>
+            </div>
+          </div>
         </div>
       </div>
     </div>
