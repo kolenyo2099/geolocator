@@ -171,6 +171,9 @@ class KonvaPanel {
       if (window.drawingLayerRegistry && typeof window.drawingLayerRegistry.unregisterKonvaShape === 'function') {
         window.drawingLayerRegistry.unregisterKonvaShape(shape, this.key);
       }
+      if (this.router && typeof this.router.handleShapeDestroyed === 'function') {
+        this.router.handleShapeDestroyed(shape);
+      }
     });
 
     this.shapes.add(shape);
@@ -1005,6 +1008,10 @@ class KonvaPanel {
     const points = shape.points();
     if (!points || points.length < 4) {
       label.visible(false);
+      shape.setAttr('pixelLength', null);
+      if (this.router && typeof this.router.handleArrowMeasurementUpdate === 'function') {
+        this.router.handleArrowMeasurementUpdate(this.key, shape);
+      }
       return;
     }
 
@@ -1020,8 +1027,14 @@ class KonvaPanel {
 
     if (!length || Number.isNaN(length)) {
       label.visible(false);
+      shape.setAttr('pixelLength', null);
+      if (this.router && typeof this.router.handleArrowMeasurementUpdate === 'function') {
+        this.router.handleArrowMeasurementUpdate(this.key, shape);
+      }
       return;
     }
+
+    shape.setAttr('pixelLength', length);
 
     const text = Math.round(length).toString();
     label.text(text);
@@ -1063,6 +1076,10 @@ class KonvaPanel {
     const layer = label.getLayer();
     if (layer) {
       layer.batchDraw();
+    }
+
+    if (this.router && typeof this.router.handleArrowMeasurementUpdate === 'function') {
+      this.router.handleArrowMeasurementUpdate(this.key, shape);
     }
   }
 
@@ -1217,6 +1234,15 @@ class DrawingRouter {
     this.activePanel = 'map';
     this.geomanLayers = new Set();
     this.modifiers = { shift: false };
+    this.sunMeasurement = {
+      panelKey: null,
+      height: null,
+      shadow: null,
+      ground: null,
+      lastAngle: null,
+      lastComputation: null,
+      warnings: []
+    };
   }
 
   init() {
@@ -1226,6 +1252,7 @@ class DrawingRouter {
     this.setActivePanel('map');
     this.updateToolbarUI();
     this.konvaManager.updatePointerBehavior(this.state.tool);
+    this.updateSunMeasurementUI();
   }
 
   attachMapHandlers() {
@@ -1505,6 +1532,443 @@ class DrawingRouter {
     this.updateToolbarUI();
   }
 
+  setSunMeasurementRole(role) {
+    if (!['height', 'shadow'].includes(role)) return;
+    const panelKey = this.konvaManager.activePanel;
+    const panel = panelKey ? this.konvaManager.getPanel(panelKey) : null;
+    if (!panel || !panel.activeShape) {
+      this.sunMeasurement.warnings = [`Select an arrow and try assigning it as the ${role}.`];
+      this.updateSunMeasurementUI();
+      return;
+    }
+
+    const shape = panel.activeShape;
+    if (!shape || shape.getAttr('shapeType') !== 'arrow') {
+      this.sunMeasurement.warnings = ['Only arrow measurements can be marked as height or shadow.'];
+      this.updateSunMeasurementUI();
+      return;
+    }
+
+    if (this.sunMeasurement.panelKey && this.sunMeasurement.panelKey !== panelKey) {
+      this.clearSunMeasurements({ silent: true });
+    }
+
+    this.sunMeasurement.panelKey = panelKey;
+    this.assignSunRole(role, shape, panelKey);
+    this.sunMeasurement.warnings = [];
+    this.calculateSunElevation({ auto: true });
+  }
+
+  setSunGroundPlane() {
+    const panelKey = this.konvaManager.activePanel;
+    const panel = panelKey ? this.konvaManager.getPanel(panelKey) : null;
+    if (!panel || !panel.activeShape) {
+      this.sunMeasurement.warnings = ['Select a polygon that represents the ground plane before assigning it.'];
+      this.updateSunMeasurementUI();
+      return;
+    }
+
+    const shape = panel.activeShape;
+    const type = shape.getAttr('shapeType');
+    if (!['polygon', 'freehand', 'line'].includes(type)) {
+      this.sunMeasurement.warnings = ['Ground plane correction requires a four-corner polygon.'];
+      this.updateSunMeasurementUI();
+      return;
+    }
+
+    const points = this.extractPolygonPoints(shape);
+    if (!points || points.length < 4) {
+      this.sunMeasurement.warnings = ['Ground plane polygon needs at least four distinct corners.'];
+      this.updateSunMeasurementUI();
+      return;
+    }
+
+    if (this.sunMeasurement.panelKey && this.sunMeasurement.panelKey !== panelKey) {
+      this.clearSunMeasurements({ silent: true });
+    }
+
+    this.sunMeasurement.panelKey = panelKey;
+    this.assignSunRole('ground', shape, panelKey);
+    this.sunMeasurement.warnings = [];
+    this.calculateSunElevation({ auto: true });
+  }
+
+  assignSunRole(role, shape, panelKey) {
+    const existing = this.sunMeasurement[role];
+    if (existing && existing.shape && !isShapeDestroyed(existing.shape)) {
+      if (existing.destroyHandler) {
+        existing.shape.off('destroy', existing.destroyHandler);
+      }
+      if (Array.isArray(existing.listeners)) {
+        existing.listeners.forEach(({ events, handler }) => {
+          existing.shape.off(events, handler);
+        });
+      }
+    }
+
+    const entry = { shape, panelKey, listeners: [] };
+    const destroyHandler = () => {
+      if (this.sunMeasurement[role] && this.sunMeasurement[role].shape === shape) {
+        this.clearSunRole(role, { silent: true });
+        this.calculateSunElevation({ auto: true });
+      }
+    };
+    shape.on('destroy', destroyHandler);
+    entry.destroyHandler = destroyHandler;
+
+    if (role === 'ground') {
+      const updateHandler = () => this.calculateSunElevation({ auto: true });
+      const events = 'dragmove transform pointsChange';
+      shape.on(events, updateHandler);
+      entry.listeners.push({ events, handler: updateHandler });
+    }
+
+    shape.setAttr('sunAssignmentRole', role);
+    this.sunMeasurement[role] = entry;
+  }
+
+  clearSunRole(role, options = {}) {
+    const { silent = false } = options;
+    const entry = this.sunMeasurement[role];
+    if (!entry) return;
+    const { shape, destroyHandler, listeners } = entry;
+    if (shape && destroyHandler) {
+      shape.off('destroy', destroyHandler);
+    }
+    if (shape && Array.isArray(listeners)) {
+      listeners.forEach(({ events, handler }) => shape.off(events, handler));
+    }
+    if (shape && shape.getAttr && shape.getAttr('sunAssignmentRole') === role) {
+      shape.setAttr('sunAssignmentRole', null);
+    }
+    this.sunMeasurement[role] = null;
+
+    if (!this.sunMeasurement.height && !this.sunMeasurement.shadow && !this.sunMeasurement.ground) {
+      this.sunMeasurement.panelKey = null;
+    }
+
+    if (!silent) {
+      this.calculateSunElevation({ auto: true });
+    }
+  }
+
+  clearSunMeasurements(options = {}) {
+    const { silent = false } = options;
+    this.clearSunRole('height', { silent: true });
+    this.clearSunRole('shadow', { silent: true });
+    this.clearSunRole('ground', { silent: true });
+    this.sunMeasurement.panelKey = null;
+    this.sunMeasurement.lastAngle = null;
+    this.sunMeasurement.lastComputation = null;
+    this.sunMeasurement.warnings = [];
+    if (!silent) {
+      this.updateSunMeasurementUI();
+    }
+  }
+
+  handleArrowMeasurementUpdate(panelKey, shape) {
+    const { height, shadow } = this.sunMeasurement;
+    const matchesHeight = height && height.shape === shape;
+    const matchesShadow = shadow && shadow.shape === shape;
+    if (!matchesHeight && !matchesShadow) return;
+    if (this.sunMeasurement.panelKey && panelKey && this.sunMeasurement.panelKey !== panelKey) return;
+    if (!this.sunMeasurement.panelKey) {
+      this.sunMeasurement.panelKey = panelKey;
+    }
+    this.calculateSunElevation({ auto: true });
+  }
+
+  handleShapeDestroyed(shape) {
+    if (!shape) return;
+    let affected = false;
+    ['height', 'shadow', 'ground'].forEach(role => {
+      const entry = this.sunMeasurement[role];
+      if (entry && entry.shape === shape) {
+        this.clearSunRole(role, { silent: true });
+        affected = true;
+      }
+    });
+    if (affected) {
+      this.sunMeasurement.lastAngle = null;
+      this.sunMeasurement.lastComputation = null;
+      this.sunMeasurement.warnings = [];
+      this.updateSunMeasurementUI();
+    }
+  }
+
+  calculateSunElevation(options = {}) {
+    const { auto = false } = options;
+    const heightEntry = this.sunMeasurement.height;
+    const shadowEntry = this.sunMeasurement.shadow;
+    const warnings = [];
+
+    if (!heightEntry || !heightEntry.shape || isShapeDestroyed(heightEntry.shape)) {
+      if (!auto) warnings.push('Assign a height arrow before computing the sun elevation.');
+      this.sunMeasurement.lastAngle = null;
+      this.sunMeasurement.lastComputation = null;
+      this.sunMeasurement.warnings = warnings;
+      this.updateSunMeasurementUI();
+      return null;
+    }
+
+    if (!shadowEntry || !shadowEntry.shape || isShapeDestroyed(shadowEntry.shape)) {
+      if (!auto) warnings.push('Assign a shadow arrow before computing the sun elevation.');
+      this.sunMeasurement.lastAngle = null;
+      this.sunMeasurement.lastComputation = null;
+      this.sunMeasurement.warnings = warnings;
+      this.updateSunMeasurementUI();
+      return null;
+    }
+
+    const heightShape = heightEntry.shape;
+    const shadowShape = shadowEntry.shape;
+    const heightLength = this.getArrowLength(heightShape);
+    const shadowLength = this.getArrowLength(shadowShape);
+
+    if (!heightLength || !Number.isFinite(heightLength)) {
+      warnings.push('Height arrow has no measurable length. Adjust the arrow points.');
+    }
+    if (!shadowLength || !Number.isFinite(shadowLength)) {
+      warnings.push('Shadow arrow has no measurable length. Adjust the arrow points.');
+    }
+
+    if (warnings.length && !auto) {
+      this.sunMeasurement.lastAngle = null;
+      this.sunMeasurement.lastComputation = null;
+      this.sunMeasurement.warnings = warnings;
+      this.updateSunMeasurementUI();
+      return null;
+    }
+
+    let correctedShadow = shadowLength;
+    let perspectiveApplied = false;
+    let scaleFactor = 1;
+    const groundEntry = this.sunMeasurement.ground;
+    if (groundEntry && groundEntry.shape && !isShapeDestroyed(groundEntry.shape)) {
+      const matrix = this.computeGroundHomography();
+      const endpoints = this.getArrowEndpoints(shadowShape);
+      if (matrix && endpoints) {
+        const startWarped = applyHomography(matrix, endpoints.start);
+        const endWarped = applyHomography(matrix, endpoints.end);
+        if (startWarped && endWarped) {
+          const warpedLength = distanceBetweenPoints(startWarped, endWarped);
+          if (warpedLength && Number.isFinite(warpedLength)) {
+            correctedShadow = warpedLength;
+            perspectiveApplied = true;
+            if (shadowLength && Number.isFinite(shadowLength) && shadowLength > 0) {
+              scaleFactor = warpedLength / shadowLength;
+            }
+          } else if (!auto) {
+            warnings.push('Perspective correction failed for the selected shadow arrow.');
+          }
+        } else if (!auto) {
+          warnings.push('Ground plane homography produced invalid coordinates.');
+        }
+      } else if (!auto) {
+        warnings.push('Ground plane polygon must contain four distinct corners for perspective correction.');
+      }
+    }
+
+    const heightInput = document.getElementById('sunActualHeight');
+    const overrideHeight = heightInput ? Number.parseFloat(heightInput.value) : NaN;
+    let usedHeight = heightLength;
+    let heightSource = 'pixel';
+    if (Number.isFinite(overrideHeight) && overrideHeight > 0) {
+      usedHeight = overrideHeight;
+      heightSource = 'actual';
+    } else if (perspectiveApplied && Number.isFinite(scaleFactor) && scaleFactor > 0 && heightLength) {
+      usedHeight = heightLength * scaleFactor;
+      heightSource = 'scaled-pixel';
+    }
+
+    if (!usedHeight || !Number.isFinite(usedHeight) || usedHeight <= 0) {
+      if (!auto) warnings.push('Unable to determine a valid object height for the calculation.');
+      this.sunMeasurement.lastAngle = null;
+      this.sunMeasurement.lastComputation = null;
+      this.sunMeasurement.warnings = warnings;
+      this.updateSunMeasurementUI();
+      return null;
+    }
+
+    if (!correctedShadow || !Number.isFinite(correctedShadow) || correctedShadow <= 0) {
+      if (!auto) warnings.push('Unable to determine a valid shadow length for the calculation.');
+      this.sunMeasurement.lastAngle = null;
+      this.sunMeasurement.lastComputation = null;
+      this.sunMeasurement.warnings = warnings;
+      this.updateSunMeasurementUI();
+      return null;
+    }
+
+    const angle = Math.atan(usedHeight / correctedShadow) * (180 / Math.PI);
+    this.sunMeasurement.lastAngle = angle;
+    this.sunMeasurement.lastComputation = {
+      height: usedHeight,
+      heightPixels: heightLength,
+      heightSource,
+      shadow: correctedShadow,
+      shadowPixels: shadowLength,
+      perspectiveApplied,
+      scaleFactor
+    };
+    this.sunMeasurement.warnings = warnings;
+    this.updateSunMeasurementUI();
+    return angle;
+  }
+
+  updateSunMeasurementUI() {
+    const angleEl = document.getElementById('sunAngleValue');
+    if (angleEl) {
+      const angle = this.sunMeasurement.lastAngle;
+      if (Number.isFinite(angle)) {
+        angleEl.textContent = `${Math.round(angle * 10) / 10}°`;
+      } else {
+        angleEl.textContent = '—';
+      }
+    }
+
+    const heightEl = document.getElementById('sunHeightAssignment');
+    if (heightEl) {
+      const entry = this.sunMeasurement.height;
+      const computation = this.sunMeasurement.lastComputation;
+      if (entry && entry.shape && !isShapeDestroyed(entry.shape)) {
+        const length = this.getArrowLength(entry.shape);
+        const id = entry.shape._id;
+        const detailParts = [];
+        const pixelText = formatNumber(length);
+        if (pixelText !== '—') {
+          detailParts.push(`${pixelText} px`);
+        }
+        if (computation) {
+          if (computation.heightSource === 'actual') {
+            const overrideText = formatNumber(computation.height);
+            if (overrideText !== '—') {
+              detailParts.push(`override ${overrideText}`);
+            }
+          } else if (computation.heightSource === 'scaled-pixel') {
+            const scaledText = formatNumber(computation.height);
+            if (scaledText !== '—' && scaledText !== pixelText) {
+              detailParts.push(`scaled ${scaledText}`);
+            }
+          }
+        }
+        const details = detailParts.length ? detailParts.join(' · ') : '—';
+        heightEl.textContent = `Height arrow #${id}: ${details}`;
+      } else {
+        heightEl.textContent = 'Height arrow: —';
+      }
+    }
+
+    const shadowEl = document.getElementById('sunShadowAssignment');
+    if (shadowEl) {
+      const entry = this.sunMeasurement.shadow;
+      const computation = this.sunMeasurement.lastComputation;
+      if (entry && entry.shape && !isShapeDestroyed(entry.shape)) {
+        const length = this.getArrowLength(entry.shape);
+        const id = entry.shape._id;
+        const detailParts = [];
+        const pixelText = formatNumber(length);
+        if (pixelText !== '—') {
+          detailParts.push(`${pixelText} px`);
+        }
+        if (computation && Number.isFinite(computation.shadow)) {
+          const correctedText = formatNumber(computation.shadow);
+          if (computation.perspectiveApplied && correctedText !== '—' && correctedText !== pixelText) {
+            detailParts.push(`corrected ${correctedText}`);
+          }
+        }
+        const details = detailParts.length ? detailParts.join(' · ') : '—';
+        shadowEl.textContent = `Shadow arrow #${id}: ${details}`;
+      } else {
+        shadowEl.textContent = 'Shadow arrow: —';
+      }
+    }
+
+    const perspectiveEl = document.getElementById('sunPerspectiveStatus');
+    if (perspectiveEl) {
+      const groundEntry = this.sunMeasurement.ground;
+      const comp = this.sunMeasurement.lastComputation;
+      if (groundEntry && groundEntry.shape && !isShapeDestroyed(groundEntry.shape)) {
+        const applied = comp && comp.perspectiveApplied;
+        perspectiveEl.textContent = applied ? 'Perspective correction: On' : 'Perspective correction: Assigned (waiting for valid homography)';
+      } else {
+        perspectiveEl.textContent = 'Perspective correction: Off';
+      }
+    }
+
+    const warningEl = document.getElementById('sunWarnings');
+    if (warningEl) {
+      const warnings = this.sunMeasurement.warnings || [];
+      if (warnings.length) {
+        warningEl.innerHTML = warnings.map(text => `<li>${escapeHtml(text)}</li>`).join('');
+        warningEl.parentElement?.classList.add('sun-tools-warnings--visible');
+      } else {
+        warningEl.innerHTML = '';
+        warningEl.parentElement?.classList.remove('sun-tools-warnings--visible');
+      }
+    }
+  }
+
+  getArrowLength(shape) {
+    if (!shape || typeof shape.points !== 'function') return null;
+    const attrLength = Number(shape.getAttr('pixelLength'));
+    if (attrLength && Number.isFinite(attrLength)) {
+      return attrLength;
+    }
+    const endpoints = this.getArrowEndpoints(shape);
+    if (!endpoints) return null;
+    return distanceBetweenPoints(endpoints.start, endpoints.end);
+  }
+
+  getArrowEndpoints(shape) {
+    if (!shape || typeof shape.points !== 'function' || typeof shape.getAbsoluteTransform !== 'function') return null;
+    const points = shape.points();
+    if (!Array.isArray(points) || points.length < 4) return null;
+    const transform = shape.getAbsoluteTransform().copy();
+    const start = transform.point({ x: points[0], y: points[1] });
+    const end = transform.point({ x: points[points.length - 2], y: points[points.length - 1] });
+    return { start, end };
+  }
+
+  extractPolygonPoints(shape) {
+    if (!shape || typeof shape.points !== 'function' || typeof shape.getAbsoluteTransform !== 'function') return null;
+    const points = shape.points();
+    if (!Array.isArray(points) || points.length < 8) return null;
+    const transform = shape.getAbsoluteTransform().copy();
+    const absolute = [];
+    for (let i = 0; i < points.length; i += 2) {
+      const point = transform.point({ x: points[i], y: points[i + 1] });
+      if (absolute.length) {
+        const prev = absolute[absolute.length - 1];
+        if (distanceBetweenPoints(prev, point) < 1e-3) {
+          continue;
+        }
+      }
+      if (absolute.length >= 3) {
+        const first = absolute[0];
+        if (distanceBetweenPoints(first, point) < 1e-3) {
+          continue;
+        }
+      }
+      absolute.push(point);
+      if (absolute.length === 4) break;
+    }
+    return absolute.length >= 4 ? absolute.slice(0, 4) : null;
+  }
+
+  computeGroundHomography() {
+    const groundEntry = this.sunMeasurement.ground;
+    if (!groundEntry || !groundEntry.shape || isShapeDestroyed(groundEntry.shape)) return null;
+    const points = this.extractPolygonPoints(groundEntry.shape);
+    if (!points || points.length < 4) return null;
+    const destination = [
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 1, y: 1 },
+      { x: 0, y: 1 }
+    ];
+    return computeHomographyMatrix(points, destination);
+  }
+
   updateToolbarUI() {
     const toolButtons = document.querySelectorAll('.tool-btn');
     toolButtons.forEach(btn => {
@@ -1569,6 +2033,121 @@ class DrawingRouter {
   }
 }
 
+function isShapeDestroyed(shape) {
+  return Boolean(shape && typeof shape.isDestroyed === 'function' && shape.isDestroyed());
+}
+
+function distanceBetweenPoints(a, b) {
+  if (!a || !b) return null;
+  if (!Number.isFinite(a.x) || !Number.isFinite(a.y) || !Number.isFinite(b.x) || !Number.isFinite(b.y)) return null;
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+function formatNumber(value) {
+  if (!Number.isFinite(value)) return '—';
+  const rounded = Math.round(value * 10) / 10;
+  return Number.isInteger(rounded) ? String(Math.round(rounded)) : rounded.toFixed(1);
+}
+
+function escapeHtml(input) {
+  if (input == null) return '';
+  return String(input)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function computeHomographyMatrix(srcPoints, dstPoints) {
+  if (!Array.isArray(srcPoints) || !Array.isArray(dstPoints) || srcPoints.length < 4 || dstPoints.length < 4) return null;
+  const A = [];
+  const b = [];
+  for (let i = 0; i < 4; i += 1) {
+    const src = srcPoints[i];
+    const dst = dstPoints[i];
+    if (!src || !dst) return null;
+    const { x, y } = src;
+    const { x: X, y: Y } = dst;
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(X) || !Number.isFinite(Y)) return null;
+    A.push([x, y, 1, 0, 0, 0, -X * x, -X * y]);
+    b.push(X);
+    A.push([0, 0, 0, x, y, 1, -Y * x, -Y * y]);
+    b.push(Y);
+  }
+  const solution = solveLinearSystem(A, b);
+  if (!solution) return null;
+  const [h11, h12, h13, h21, h22, h23, h31, h32] = solution;
+  return [
+    [h11, h12, h13],
+    [h21, h22, h23],
+    [h31, h32, 1]
+  ];
+}
+
+function solveLinearSystem(matrix, values) {
+  if (!Array.isArray(matrix) || !Array.isArray(values)) return null;
+  const n = matrix.length;
+  if (!n || values.length !== n) return null;
+  const m = matrix[0].length;
+  const augmented = matrix.map((row, idx) => {
+    if (!Array.isArray(row) || row.length !== m) return null;
+    return [...row, values[idx]];
+  });
+  if (augmented.some(row => row == null)) return null;
+
+  for (let col = 0; col < m; col += 1) {
+    let pivot = col;
+    let max = Math.abs(augmented[pivot][col]);
+    for (let row = col + 1; row < n; row += 1) {
+      const val = Math.abs(augmented[row][col]);
+      if (val > max) {
+        pivot = row;
+        max = val;
+      }
+    }
+    if (max < 1e-12) {
+      return null;
+    }
+    if (pivot !== col) {
+      [augmented[pivot], augmented[col]] = [augmented[col], augmented[pivot]];
+    }
+    const pivotVal = augmented[col][col];
+    for (let j = col; j <= m; j += 1) {
+      augmented[col][j] /= pivotVal;
+    }
+    for (let row = 0; row < n; row += 1) {
+      if (row === col) continue;
+      const factor = augmented[row][col];
+      if (!factor) continue;
+      for (let j = col; j <= m; j += 1) {
+        augmented[row][j] -= factor * augmented[col][j];
+      }
+    }
+  }
+
+  const result = [];
+  for (let i = 0; i < m; i += 1) {
+    result.push(augmented[i][m]);
+  }
+  return result;
+}
+
+function applyHomography(matrix, point) {
+  if (!matrix || !point) return null;
+  const [[h11, h12, h13], [h21, h22, h23], [h31, h32, h33]] = matrix;
+  const { x, y } = point;
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  const denom = h31 * x + h32 * y + h33;
+  if (!Number.isFinite(denom) || Math.abs(denom) < 1e-12) return null;
+  const X = (h11 * x + h12 * y + h13) / denom;
+  const Y = (h21 * x + h22 * y + h23) / denom;
+  if (!Number.isFinite(X) || !Number.isFinite(Y)) return null;
+  return { x: X, y: Y };
+}
+
 const drawingRouter = new DrawingRouter(typeof map !== 'undefined' ? map : null);
 window.drawingRouter = drawingRouter;
 
@@ -1579,6 +2158,13 @@ document.addEventListener('DOMContentLoaded', () => {
   updateFillOpacity(DRAWING_DEFAULTS.fillOpacity * 100);
   selectLineWidth(DRAWING_DEFAULTS.lineWidth);
   resizeMapCanvas();
+
+  const actualHeightInput = document.getElementById('sunActualHeight');
+  if (actualHeightInput) {
+    actualHeightInput.addEventListener('input', () => {
+      drawingRouter.calculateSunElevation({ auto: true });
+    });
+  }
 });
 
 /* ========== Toolbar Helpers ========== */
@@ -1613,6 +2199,42 @@ function updateFillOpacity(value) {
 
 function selectLineWidth(width) {
   drawingRouter.setLineWidth(width);
+}
+
+function toggleSunToolsPanel(forceState) {
+  const panel = document.getElementById('sunToolsPanel');
+  const toggle = document.getElementById('sunToolsToggle');
+  if (!panel) return;
+  let open;
+  if (typeof forceState === 'boolean') {
+    open = forceState;
+  } else {
+    open = !panel.classList.contains('open');
+  }
+  panel.classList.toggle('open', open);
+  panel.setAttribute('aria-hidden', open ? 'false' : 'true');
+  if (toggle) {
+    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+  if (open) {
+    drawingRouter.updateSunMeasurementUI();
+  }
+}
+
+function setSunMeasurementRole(role) {
+  drawingRouter.setSunMeasurementRole(role);
+}
+
+function setSunGroundPlane() {
+  drawingRouter.setSunGroundPlane();
+}
+
+function clearSunMeasurements() {
+  drawingRouter.clearSunMeasurements();
+}
+
+function calculateSunElevation() {
+  drawingRouter.calculateSunElevation({ auto: false });
 }
 
 function undoLast() {
@@ -1682,3 +2304,8 @@ window.undoLast = undoLast;
 window.redoLast = redoLast;
 window.clearAll = clearAll;
 window.resizeMapCanvas = resizeMapCanvas;
+window.toggleSunToolsPanel = toggleSunToolsPanel;
+window.setSunMeasurementRole = setSunMeasurementRole;
+window.setSunGroundPlane = setSunGroundPlane;
+window.clearSunMeasurements = clearSunMeasurements;
+window.calculateSunElevation = calculateSunElevation;
