@@ -1058,8 +1058,22 @@ class KonvaPanel {
     const label = marker.label;
     if (!arc || !label) return;
 
+    const toStagePoint = (point) => {
+      if (!point || !this.stage || typeof this.stage.getAbsoluteTransform !== 'function') {
+        return point;
+      }
+      const absolute = this.stage.getAbsoluteTransform();
+      if (!absolute || typeof absolute.copy !== 'function') return point;
+      const inverse = absolute.copy().invert();
+      if (!inverse || typeof inverse.point !== 'function') return point;
+      return inverse.point(point);
+    };
+
+    const stagePoint = toStagePoint(geometry.point);
+    if (!stagePoint) return;
+
     arc.stroke(color);
-    arc.position({ x: geometry.point.x, y: geometry.point.y });
+    arc.position({ x: stagePoint.x, y: stagePoint.y });
     arc.rotation(geometry.rotation);
     arc.angle(geometry.sweep);
     arc.visible(true);
@@ -1068,8 +1082,8 @@ class KonvaPanel {
     const midRad = (geometry.midAngle * Math.PI) / 180;
     const text = this.formatAngleText(geometry.angle);
     const labelPos = {
-      x: geometry.point.x + Math.cos(midRad) * labelRadius,
-      y: geometry.point.y + Math.sin(midRad) * labelRadius
+      x: stagePoint.x + Math.cos(midRad) * labelRadius,
+      y: stagePoint.y + Math.sin(midRad) * labelRadius
     };
 
     label.text(text);
@@ -1760,7 +1774,9 @@ class DrawingRouter {
     }
 
     const existing = this.sunMeasurement[role];
-    if (existing && existing.shape === shape && !isShapeDestroyed(shape)) {
+    const sameExisting = existing && existing.shape && !isShapeDestroyed(existing.shape) &&
+      (existing.shape === shape || existing.shape._id === shape._id);
+    if (sameExisting) {
       if (panelKey) {
         this.sunMeasurement.panelKey = panelKey;
       }
@@ -1772,7 +1788,9 @@ class DrawingRouter {
 
     const otherRole = role === 'height' ? 'shadow' : 'height';
     const otherEntry = this.sunMeasurement[otherRole];
-    if (otherEntry && otherEntry.shape && !isShapeDestroyed(otherEntry.shape) && otherEntry.shape === shape) {
+    const sameAsOther = otherEntry && otherEntry.shape && !isShapeDestroyed(otherEntry.shape) &&
+      (otherEntry.shape === shape || otherEntry.shape._id === shape._id);
+    if (sameAsOther) {
       const label = role === 'height' ? 'height' : 'shadow';
       this.sunMeasurement.warnings = [`Select a different arrow for the ${label} measurement.`];
       this.updateSunMeasurementUI();
