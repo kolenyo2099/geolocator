@@ -323,9 +323,24 @@ class KonvaPanel {
   }
 
   getPointerPosition(evt) {
-    const stage = evt.target.getStage();
+    const stage = evt && typeof evt.target?.getStage === 'function'
+      ? evt.target.getStage()
+      : this.stage;
     if (!stage) return null;
-    return stage.getPointerPosition();
+
+    const pointer = stage.getPointerPosition();
+    if (!pointer) return null;
+
+    const transform = this.viewportTransform || {};
+    const scaleX = transform.scaleX || 1;
+    const scaleY = transform.scaleY || 1;
+    const translateX = transform.translateX || 0;
+    const translateY = transform.translateY || 0;
+
+    return {
+      x: (pointer.x - translateX) / scaleX,
+      y: (pointer.y - translateY) / scaleY
+    };
   }
 
   styleAttributes() {
