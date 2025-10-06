@@ -580,6 +580,26 @@ class KonvaPanel {
     this.layer.batchDraw();
   }
 
+  getActiveShape() {
+    if (this.activeShape && !isShapeDestroyed(this.activeShape)) {
+      return this.activeShape;
+    }
+
+    if (this.transformer && typeof this.transformer.nodes === 'function') {
+      const nodes = this.transformer.nodes();
+      if (Array.isArray(nodes)) {
+        for (const node of nodes) {
+          if (node && !isShapeDestroyed(node)) {
+            this.activeShape = node;
+            return node;
+          }
+        }
+      }
+    }
+
+    return null;
+  }
+
   applyViewportTransform(transform = {}) {
     if (!this.stage) return;
 
@@ -1277,6 +1297,31 @@ class KonvaManager {
     this.panels.forEach(panel => panel.clearSelection());
   }
 
+  getSelection() {
+    const orderedKeys = [];
+    if (this.activePanel) {
+      orderedKeys.push(this.activePanel);
+    }
+    this.panels.forEach((_, key) => {
+      if (!orderedKeys.includes(key)) {
+        orderedKeys.push(key);
+      }
+    });
+
+    for (const key of orderedKeys) {
+      const panel = this.panels.get(key);
+      if (!panel) continue;
+      const shape = typeof panel.getActiveShape === 'function'
+        ? panel.getActiveShape()
+        : panel.activeShape;
+      if (shape && !isShapeDestroyed(shape)) {
+        return { key, panel, shape };
+      }
+    }
+
+    return null;
+  }
+
   getPanel(key) {
     return this.panels.get(key);
   }
@@ -1613,15 +1658,19 @@ class DrawingRouter {
 
   setSunMeasurementRole(role) {
     if (!['height', 'shadow'].includes(role)) return;
-    const panelKey = this.konvaManager.activePanel;
-    const panel = panelKey ? this.konvaManager.getPanel(panelKey) : null;
-    if (!panel || !panel.activeShape) {
+    const selection = typeof this.konvaManager.getSelection === 'function'
+      ? this.konvaManager.getSelection()
+      : null;
+    const panelKey = selection?.key;
+    const panel = selection?.panel || (panelKey ? this.konvaManager.getPanel(panelKey) : null);
+    const shape = selection?.shape || (panel && typeof panel.getActiveShape === 'function' ? panel.getActiveShape() : panel?.activeShape);
+
+    if (!panel || !shape) {
       this.sunMeasurement.warnings = [`Select an arrow and try assigning it as the ${role}.`];
       this.updateSunMeasurementUI();
       return;
     }
 
-    const shape = panel.activeShape;
     if (!shape || shape.getAttr('shapeType') !== 'arrow') {
       this.sunMeasurement.warnings = ['Only arrow measurements can be marked as height or shadow.'];
       this.updateSunMeasurementUI();
@@ -1639,15 +1688,19 @@ class DrawingRouter {
   }
 
   setSunGroundPlane() {
-    const panelKey = this.konvaManager.activePanel;
-    const panel = panelKey ? this.konvaManager.getPanel(panelKey) : null;
-    if (!panel || !panel.activeShape) {
+    const selection = typeof this.konvaManager.getSelection === 'function'
+      ? this.konvaManager.getSelection()
+      : null;
+    const panelKey = selection?.key;
+    const panel = selection?.panel || (panelKey ? this.konvaManager.getPanel(panelKey) : null);
+    const shape = selection?.shape || (panel && typeof panel.getActiveShape === 'function' ? panel.getActiveShape() : panel?.activeShape);
+
+    if (!panel || !shape) {
       this.sunMeasurement.warnings = ['Select a polygon that represents the ground plane before assigning it.'];
       this.updateSunMeasurementUI();
       return;
     }
 
-    const shape = panel.activeShape;
     const type = shape.getAttr('shapeType');
     if (!['polygon', 'freehand', 'line'].includes(type)) {
       this.sunMeasurement.warnings = ['Ground plane correction requires a four-corner polygon.'];
