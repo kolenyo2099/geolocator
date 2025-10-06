@@ -879,6 +879,15 @@ function removeLayer(layerId, event) {
   }
 }
 
+function deselectImageLayer() {
+  if (selectedLayerId == null) return;
+  selectedLayerId = null;
+  updateLayersList();
+  redrawAllLayers();
+}
+
+window.deselectImageLayer = deselectImageLayer;
+
 function redrawAllLayers() {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, imageCanvas.width, imageCanvas.height);

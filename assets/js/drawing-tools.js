@@ -39,6 +39,7 @@ class KonvaPanel {
     this.overlay.style.width = '100%';
     this.overlay.style.height = '100%';
     this.overlay.style.pointerEvents = 'none';
+    this.pointerEnabled = false;
     const overlayZIndex = options.zIndex != null ? options.zIndex : 30;
     this.overlay.style.zIndex = String(overlayZIndex);
 
@@ -92,8 +93,9 @@ class KonvaPanel {
   }
 
   setPointerEnabled(enabled) {
+    this.pointerEnabled = !!enabled;
     if (this.forwarding) return;
-    this.overlay.style.pointerEvents = enabled ? 'auto' : 'none';
+    this.overlay.style.pointerEvents = this.pointerEnabled ? 'auto' : 'none';
   }
 
   resize() {
@@ -541,8 +543,19 @@ class KonvaPanel {
     if (!this.forwarding) return;
     this.forwardPointerEvent('mouseup', evt);
     this.forwarding = false;
-    const shouldEnable = this.router.activePanel === this.key && this.router.state.tool !== 'pan' && this.router.state.tool !== 'note';
-    this.overlay.style.pointerEvents = shouldEnable ? 'auto' : 'none';
+    this.overlay.style.pointerEvents = this.pointerEnabled ? 'auto' : 'none';
+  }
+
+  cancelForwarding() {
+    if (!this.forwarding) return;
+    this.forwarding = false;
+    this.overlay.style.pointerEvents = this.pointerEnabled ? 'auto' : 'none';
+  }
+
+  clearSelection() {
+    this.transformer.nodes([]);
+    this.activeShape = null;
+    this.layer.batchDraw();
   }
 
   forwardPointerEvent(type, evt) {
@@ -1195,7 +1208,7 @@ class KonvaManager {
     this.activePanel = key;
     this.panels.forEach((panel, panelKey) => {
       panel.setPointerEnabled(key && panelKey === key);
-      panel.transformer.nodes([]);
+      panel.clearSelection();
     });
   }
 
@@ -1207,6 +1220,14 @@ class KonvaManager {
       }
       panel.setPointerEnabled(shouldEnable);
     });
+  }
+
+  cancelForwarding() {
+    this.panels.forEach(panel => panel.cancelForwarding());
+  }
+
+  clearSelections() {
+    this.panels.forEach(panel => panel.clearSelection());
   }
 
   getPanel(key) {
@@ -1481,6 +1502,17 @@ class DrawingRouter {
 
   selectTool(tool) {
     this.state.tool = tool;
+    this.konvaManager.cancelForwarding();
+    if (tool !== 'pan') {
+      this.konvaManager.clearSelections();
+      if (typeof window.deselectImageLayer === 'function') {
+        try {
+          window.deselectImageLayer();
+        } catch (err) {
+          console.warn('Failed to deselect image layer', err);
+        }
+      }
+    }
     if (this.activePanel === 'map' || this.activePanel === 'map-overlay') {
       const desiredPanel = this.desiredMapPanel(tool);
       if (desiredPanel !== this.activePanel) {
