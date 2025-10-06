@@ -1694,7 +1694,22 @@ class DrawingRouter {
     const panelKey = selection?.key;
     const panel = selection?.panel || (panelKey ? this.konvaManager.getPanel(panelKey) : null);
     const shape = selection?.shape || (panel && typeof panel.getActiveShape === 'function' ? panel.getActiveShape() : panel?.activeShape);
+    const existingEntry = this.sunMeasurement[role];
+    const existingShape = existingEntry?.shape;
+    const selectingExisting = panel && shape && existingShape && !isShapeDestroyed(existingShape) && shapesMatch(existingShape, shape);
     let assigned = false;
+
+    if (selectingExisting) {
+      const label = role === 'height' ? 'height' : 'shadow';
+      this.sunMeasurement.pendingRole = role;
+      this.sunMeasurement.warnings = [`Select a different arrow to reassign the ${label} measurement.`];
+      if (this.konvaManager && typeof this.konvaManager.clearSelections === 'function') {
+        this.konvaManager.clearSelections();
+      }
+      this.updateSunMeasurementUI();
+      return;
+    }
+
     if (panel && shape) {
       assigned = this.tryAssignSunRole(role, shape, panelKey);
       if (assigned) {
