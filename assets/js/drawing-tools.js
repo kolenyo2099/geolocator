@@ -59,6 +59,13 @@ class KonvaPanel {
     this.layer = new Konva.Layer();
     this.stage.add(this.layer);
 
+    this.viewportTransform = {
+      scaleX: 1,
+      scaleY: 1,
+      translateX: 0,
+      translateY: 0
+    };
+
     this.transformer = new Konva.Transformer({
       rotateEnabled: true,
       rotateAnchorOffset: 30,
@@ -556,6 +563,31 @@ class KonvaPanel {
     this.transformer.nodes([]);
     this.activeShape = null;
     this.layer.batchDraw();
+  }
+
+  applyViewportTransform(transform = {}) {
+    if (!this.stage) return;
+
+    const next = {
+      scaleX: typeof transform.scaleX === 'number' ? transform.scaleX : (typeof transform.scale === 'number' ? transform.scale : this.viewportTransform.scaleX),
+      scaleY: typeof transform.scaleY === 'number' ? transform.scaleY : (typeof transform.scale === 'number' ? transform.scale : this.viewportTransform.scaleY),
+      translateX: typeof transform.translateX === 'number' ? transform.translateX : (typeof transform.x === 'number' ? transform.x : this.viewportTransform.translateX),
+      translateY: typeof transform.translateY === 'number' ? transform.translateY : (typeof transform.y === 'number' ? transform.y : this.viewportTransform.translateY)
+    };
+
+    const changed =
+      next.scaleX !== this.viewportTransform.scaleX ||
+      next.scaleY !== this.viewportTransform.scaleY ||
+      next.translateX !== this.viewportTransform.translateX ||
+      next.translateY !== this.viewportTransform.translateY;
+
+    if (!changed) return;
+
+    this.viewportTransform = next;
+
+    this.stage.scale({ x: next.scaleX, y: next.scaleY });
+    this.stage.position({ x: next.translateX, y: next.translateY });
+    this.stage.batchDraw();
   }
 
   forwardPointerEvent(type, evt) {
