@@ -112,9 +112,10 @@ class KonvaPanel {
     if (this.forwarding) return;
 
     const tool = this.router.state.tool;
-    // For PeakFinder, if the pan tool is active, we want to be able to interact
-    // with the underlying canvas, so we disable pointer events on the overlay.
-    if (this.key === 'peakfinder' && tool === 'pan') {
+    // For panels that forward events (all except 'image'), if the pan tool
+    // is active, we want to be able to interact with the underlying canvas,
+    // so we disable pointer events on the overlay.
+    if (tool === 'pan' && this.key !== 'image') {
       this.overlay.style.pointerEvents = 'none';
       return;
     }
