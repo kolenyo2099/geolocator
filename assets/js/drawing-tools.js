@@ -1260,6 +1260,8 @@ class KonvaManager {
     this.router = router;
     this.panels = new Map();
     this.activePanel = null;
+    this.pointerOverride = null;
+    this.currentTool = router && router.state && router.state.tool ? router.state.tool : 'pan';
   }
 
   panelDefinitions() {
@@ -1300,22 +1302,49 @@ class KonvaManager {
     });
   }
 
-  setActivePanel(key) {
-    this.activePanel = key;
+  applyPointerState() {
     this.panels.forEach((panel, panelKey) => {
-      panel.setPointerEnabled(key && panelKey === key);
-      panel.clearSelection();
+      let shouldEnable = false;
+
+      if (this.pointerOverride === 'all') {
+        shouldEnable = true;
+      } else if (this.pointerOverride === 'none') {
+        shouldEnable = false;
+      } else {
+        shouldEnable = this.activePanel && panelKey === this.activePanel;
+        if (panelKey === 'map-overlay' && this.router && typeof this.router.usesGeoman === 'function') {
+          if (this.router.usesGeoman(this.currentTool)) {
+            shouldEnable = false;
+          }
+        }
+      }
+
+      panel.setPointerEnabled(shouldEnable);
     });
   }
 
-  updatePointerBehavior(tool) {
-    this.panels.forEach((panel, panelKey) => {
-      let shouldEnable = this.activePanel && panelKey === this.activePanel;
-      if (panelKey === 'map-overlay' && this.router && this.router.usesGeoman(tool)) {
-        shouldEnable = false;
-      }
-      panel.setPointerEnabled(shouldEnable);
+  setActivePanel(key) {
+    this.activePanel = key;
+    this.panels.forEach(panel => {
+      panel.clearSelection();
     });
+    this.applyPointerState();
+  }
+
+  updatePointerBehavior(tool) {
+    this.currentTool = tool;
+    this.applyPointerState();
+  }
+
+  setPointerOverride(mode) {
+    const normalized = mode === 'all' ? 'all' : mode === 'none' ? 'none' : null;
+    if (this.pointerOverride === normalized) return;
+    this.pointerOverride = normalized;
+    this.applyPointerState();
+  }
+
+  clearPointerOverride() {
+    this.setPointerOverride(null);
   }
 
   cancelForwarding() {
@@ -1706,6 +1735,7 @@ class DrawingRouter {
     let messageSet = false;
 
     this.sunMeasurement.pendingRole = role;
+    this.updateSunAssignmentPointerMode();
 
     if (selectingExisting) {
       const label = role === 'height' ? 'height' : 'shadow';
@@ -1742,6 +1772,18 @@ class DrawingRouter {
       const label = role === 'height' ? 'height' : 'shadow';
       this.sunMeasurement.warnings = [`Click an arrow to assign it as the ${label} measurement.`];
       this.updateSunMeasurementUI();
+    }
+  }
+
+  updateSunAssignmentPointerMode() {
+    if (!this.konvaManager) return;
+    if (typeof this.konvaManager.setPointerOverride !== 'function') return;
+    if (this.sunMeasurement.pendingRole) {
+      this.konvaManager.setPointerOverride('all');
+    } else if (typeof this.konvaManager.clearPointerOverride === 'function') {
+      this.konvaManager.clearPointerOverride();
+    } else {
+      this.konvaManager.setPointerOverride(null);
     }
   }
 
@@ -1783,6 +1825,7 @@ class DrawingRouter {
 
     this.sunMeasurement.panelKey = panelKey;
     this.sunMeasurement.pendingRole = null;
+    this.updateSunAssignmentPointerMode();
     this.assignSunRole('ground', shape, panelKey);
     this.sunMeasurement.warnings = [];
     this.calculateSunElevation({ auto: true });
@@ -1796,6 +1839,7 @@ class DrawingRouter {
     if (!assigned) {
       this.sunMeasurement.pendingRole = role;
     }
+    this.updateSunAssignmentPointerMode();
   }
 
   tryAssignSunRole(role, shape, panelKey) {
@@ -1825,6 +1869,7 @@ class DrawingRouter {
       this.sunMeasurement.pendingRole = null;
       this.sunMeasurement.warnings = [];
       this.calculateSunElevation({ auto: true });
+      this.updateSunAssignmentPointerMode();
       return true;
     }
 
@@ -1847,6 +1892,7 @@ class DrawingRouter {
     this.sunMeasurement.pendingRole = null;
     this.sunMeasurement.warnings = [];
     this.calculateSunElevation({ auto: true });
+    this.updateSunAssignmentPointerMode();
     return true;
   }
 
@@ -1904,6 +1950,8 @@ class DrawingRouter {
       this.sunMeasurement.pendingRole = null;
     }
 
+    this.updateSunAssignmentPointerMode();
+
     if (!this.sunMeasurement.height && !this.sunMeasurement.shadow && !this.sunMeasurement.ground) {
       this.sunMeasurement.panelKey = null;
     }
@@ -1923,6 +1971,7 @@ class DrawingRouter {
     this.sunMeasurement.lastComputation = null;
     this.sunMeasurement.warnings = [];
     this.sunMeasurement.pendingRole = null;
+    this.updateSunAssignmentPointerMode();
     if (!silent) {
       this.updateSunMeasurementUI();
     }
