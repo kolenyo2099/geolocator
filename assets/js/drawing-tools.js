@@ -1827,6 +1827,7 @@ class DrawingRouter {
       this.sunMeasurement.pendingRole = role;
       this.updateSunAssignmentPointerMode();
     }
+    this.updateSunAssignmentPointerMode();
   }
 
   attemptSunArrowAssignment(role, shape, panelKey, options = {}) {
