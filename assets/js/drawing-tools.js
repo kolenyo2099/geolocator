@@ -1700,11 +1700,15 @@ class DrawingRouter {
     const existingEntry = this.sunMeasurement[role];
     const existingShape = existingEntry?.shape;
     const selectingExisting = panel && shape && existingShape && !isShapeDestroyed(existingShape) && shapesMatch(existingShape, shape);
+    const shapeAssignment = shape && typeof shape.getAttr === 'function' ? shape.getAttr('sunAssignmentRole') : null;
+    const eligibleForImmediateAssignment = panel && shape && (!shapeAssignment || shapeAssignment === role);
     let assigned = false;
+    let messageSet = false;
+
+    this.sunMeasurement.pendingRole = role;
 
     if (selectingExisting) {
       const label = role === 'height' ? 'height' : 'shadow';
-      this.sunMeasurement.pendingRole = role;
       this.sunMeasurement.warnings = [`Select a different arrow to reassign the ${label} measurement.`];
       if (this.konvaManager && typeof this.konvaManager.clearSelections === 'function') {
         this.konvaManager.clearSelections();
@@ -1713,10 +1717,13 @@ class DrawingRouter {
       return;
     }
 
-    if (panel && shape) {
+    if (eligibleForImmediateAssignment) {
       assigned = this.tryAssignSunRole(role, shape, panelKey);
       if (assigned) {
         return;
+      }
+      if (Array.isArray(this.sunMeasurement.warnings) && this.sunMeasurement.warnings.length > 0) {
+        messageSet = true;
       }
 
       const otherRole = role === 'height' ? 'shadow' : 'height';
@@ -1724,11 +1731,14 @@ class DrawingRouter {
       if (shapesMatch(otherShape, shape) && this.konvaManager && typeof this.konvaManager.clearSelections === 'function') {
         this.konvaManager.clearSelections();
       }
+    } else if (panel && shape) {
+      const label = role === 'height' ? 'height' : 'shadow';
+      this.sunMeasurement.warnings = [`Click an arrow to assign it as the ${label} measurement.`];
+      this.updateSunMeasurementUI();
+      messageSet = true;
     }
 
-    this.sunMeasurement.pendingRole = role;
-
-    if (!panel || !shape) {
+    if ((!panel || !shape) && !messageSet) {
       const label = role === 'height' ? 'height' : 'shadow';
       this.sunMeasurement.warnings = [`Click an arrow to assign it as the ${label} measurement.`];
       this.updateSunMeasurementUI();
