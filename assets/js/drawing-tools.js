@@ -2497,6 +2497,24 @@ function calculateSunElevation() {
   drawingRouter.calculateSunElevation({ auto: false });
 }
 
+function showSunToolsHelp() {
+  const overlay = document.getElementById('sunHelpOverlay');
+  if (!overlay) return;
+  overlay.classList.add('visible');
+  overlay.setAttribute('aria-hidden', 'false');
+  const closeButton = overlay.querySelector('.sun-help-close');
+  if (closeButton && typeof closeButton.focus === 'function') {
+    closeButton.focus();
+  }
+}
+
+function hideSunToolsHelp() {
+  const overlay = document.getElementById('sunHelpOverlay');
+  if (!overlay) return;
+  overlay.classList.remove('visible');
+  overlay.setAttribute('aria-hidden', 'true');
+}
+
 function undoLast() {
   if (Array.isArray(stickyNotes) && stickyNotes.length > 0) {
     const lastNote = stickyNotes[stickyNotes.length - 1];
@@ -2569,3 +2587,23 @@ window.setSunMeasurementRole = setSunMeasurementRole;
 window.setSunGroundPlane = setSunGroundPlane;
 window.clearSunMeasurements = clearSunMeasurements;
 window.calculateSunElevation = calculateSunElevation;
+window.showSunToolsHelp = showSunToolsHelp;
+window.hideSunToolsHelp = hideSunToolsHelp;
+
+const sunHelpOverlay = document.getElementById('sunHelpOverlay');
+if (sunHelpOverlay) {
+  sunHelpOverlay.addEventListener('click', (event) => {
+    if (event.target === sunHelpOverlay) {
+      hideSunToolsHelp();
+    }
+  });
+}
+
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') {
+    const overlay = document.getElementById('sunHelpOverlay');
+    if (overlay && overlay.classList.contains('visible')) {
+      hideSunToolsHelp();
+    }
+  }
+});

@@ -282,6 +282,14 @@ body.resizing .resizer {
   align-items:flex-start;
   gap:1rem;
 }
+.sun-tools-header-actions{
+  display:flex;
+  align-items:center;
+  gap:.4rem;
+}
+.sun-tools-help{
+  box-shadow:0 6px 16px rgba(102,187,106,.3);
+}
 .sun-tools-title h4{
   margin:0;
   font-size:1rem;
@@ -352,6 +360,83 @@ body.resizing .resizer {
 .sun-tools-warnings h5{margin:0 0 .4rem;font-size:.85rem;color:#b15c00}
 .sun-tools-warnings ul{margin:0;padding-left:1.1rem;font-size:.8rem;color:#8a4a00;line-height:1.4}
 .sun-tools-warnings ul li+li{margin-top:.25rem}
+.sun-help-overlay{
+  position:fixed;
+  inset:0;
+  background:rgba(15,23,42,.55);
+  display:none;
+  align-items:center;
+  justify-content:center;
+  padding:1.5rem;
+  z-index:1100;
+}
+.sun-help-overlay.visible{display:flex}
+.sun-help-content{
+  background:#fff;
+  border-radius:16px;
+  max-width:560px;
+  width:100%;
+  padding:1.8rem;
+  box-shadow:0 18px 45px rgba(15,23,42,.25);
+  display:flex;
+  flex-direction:column;
+  gap:1.2rem;
+}
+.sun-help-header{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:.8rem;
+}
+.sun-help-header h2{
+  margin:0;
+  font-size:1.4rem;
+  color:#0f172a;
+}
+.sun-help-close{
+  background:none;
+  border:none;
+  font-size:1.8rem;
+  line-height:1;
+  cursor:pointer;
+  color:#475569;
+  padding:.15rem .4rem;
+  border-radius:8px;
+  transition:background .2s,color .2s;
+}
+.sun-help-close:hover{background:rgba(148,163,184,.2);color:#0f172a}
+.sun-help-body{
+  display:flex;
+  flex-direction:column;
+  gap:1rem;
+  color:#334155;
+  font-size:.95rem;
+  line-height:1.6;
+}
+.sun-help-body ol{margin:0;padding-left:1.2rem;display:flex;flex-direction:column;gap:.5rem}
+.sun-help-body li strong{color:#0f172a}
+.sun-help-examples{
+  background:#f8fafc;
+  border:1px solid #e2e8f0;
+  border-radius:12px;
+  padding:1rem 1.1rem;
+  display:flex;
+  flex-direction:column;
+  gap:.6rem;
+}
+.sun-help-examples h3{
+  margin:0;
+  font-size:1.05rem;
+  color:#1e293b;
+}
+.sun-help-examples ul{margin:0;padding-left:1.1rem;display:flex;flex-direction:column;gap:.4rem;font-size:.9rem;color:#475569}
+.sun-help-examples li strong{color:#0f172a}
+.sun-help-tip{
+  margin:0;
+  font-size:.9rem;
+  color:#2563eb;
+  font-weight:600;
+}
 
 .tool-btn{
   padding:.5rem .8rem;border:2px solid #ddd;
