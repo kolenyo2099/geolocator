@@ -326,6 +326,10 @@ async function initializePeakFinder() {
     document.getElementById('viewInfoBar').classList.add('visible');
     document.getElementById('viewToggleIcon').textContent = '🗺️';
     document.getElementById('viewToggleText').textContent = 'Back to 2D Map';
+
+    if (window.drawingRouter) {
+      window.drawingRouter.setActivePanel('peakfinder');
+    }
   }
 
   if (typeof syncDrawingPanel === 'function') {
