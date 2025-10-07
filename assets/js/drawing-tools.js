@@ -474,7 +474,7 @@ class KonvaPanel {
 
   onPointerMove(evt) {
     if (this.forwarding) {
-      this.forwardPointerEvent('mousemove', evt);
+      this.forwardPointerEvent(evt, 'mousemove');
       return;
     }
 
@@ -577,12 +577,12 @@ class KonvaPanel {
     if (!this.forwardTarget) return;
     this.forwarding = true;
     this.overlay.style.pointerEvents = 'none';
-    this.forwardPointerEvent('mousedown', evt, tool);
+    this.forwardPointerEvent(evt, 'mousedown');
   }
 
   stopForwarding(evt) {
     if (!this.forwarding) return;
-    this.forwardPointerEvent('mouseup', evt);
+    this.forwardPointerEvent(evt, 'mouseup');
     this.forwarding = false;
     this.overlay.style.pointerEvents = this.pointerEnabled ? 'auto' : 'none';
   }
@@ -644,39 +644,88 @@ class KonvaPanel {
     this.stage.batchDraw();
   }
 
-  forwardPointerEvent(type, evt) {
+  forwardPointerEvent(evt, fallbackType) {
     if (!this.forwardTarget || !evt) return;
     const source = evt.evt;
     if (!source) return;
 
-    let clientX = source.clientX;
-    let clientY = source.clientY;
-    let screenX = source.screenX;
-    let screenY = source.screenY;
-    let buttons = source.buttons;
+    let type = source.type || fallbackType;
+    if (!type) return;
+
+    const baseInit = {
+      bubbles: true,
+      cancelable: true,
+      clientX: source.clientX ?? 0,
+      clientY: source.clientY ?? 0,
+      screenX: source.screenX ?? 0,
+      screenY: source.screenY ?? 0,
+      button: source.button ?? 0,
+      buttons: source.buttons ?? (type.endsWith('up') ? 0 : 1),
+      altKey: source.altKey ?? false,
+      ctrlKey: source.ctrlKey ?? false,
+      metaKey: source.metaKey ?? false,
+      shiftKey: source.shiftKey ?? false
+    };
+
+    if (typeof PointerEvent !== 'undefined' && source instanceof PointerEvent) {
+      const pointerEvent = new PointerEvent(type, {
+        ...baseInit,
+        pointerId: source.pointerId ?? 0,
+        width: source.width ?? 1,
+        height: source.height ?? 1,
+        pressure: source.pressure ?? (type === 'pointerup' ? 0 : 0.5),
+        tangentialPressure: source.tangentialPressure ?? 0,
+        tiltX: source.tiltX ?? 0,
+        tiltY: source.tiltY ?? 0,
+        twist: source.twist ?? 0,
+        pointerType: source.pointerType || 'mouse',
+        isPrimary: source.isPrimary ?? true
+      });
+      this.forwardTarget.dispatchEvent(pointerEvent);
+      return;
+    }
 
     if (typeof TouchEvent !== 'undefined' && source instanceof TouchEvent) {
       const touch = source.touches[0] || source.changedTouches[0];
       if (touch) {
-        clientX = touch.clientX;
-        clientY = touch.clientY;
-        screenX = touch.screenX;
-        screenY = touch.screenY;
-        buttons = 1;
+        baseInit.clientX = touch.clientX;
+        baseInit.clientY = touch.clientY;
+        baseInit.screenX = touch.screenX;
+        baseInit.screenY = touch.screenY;
+        baseInit.button = 0;
+        baseInit.buttons = source.type === 'touchend' || source.type === 'touchcancel' ? 0 : 1;
       }
+
+      if (typeof PointerEvent !== 'undefined') {
+        const touchToPointer = {
+          touchstart: 'pointerdown',
+          touchmove: 'pointermove',
+          touchend: 'pointerup',
+          touchcancel: 'pointercancel'
+        };
+        const pointerType = touchToPointer[type] || type;
+        const pointerEvent = new PointerEvent(pointerType, {
+          ...baseInit,
+          pointerId: touch?.identifier ?? 0,
+          width: touch?.radiusX ?? 1,
+          height: touch?.radiusY ?? 1,
+          pressure: source.type === 'touchend' || source.type === 'touchcancel' ? 0 : 0.5,
+          pointerType: 'touch',
+          isPrimary: true
+        });
+        this.forwardTarget.dispatchEvent(pointerEvent);
+        return;
+      }
+
+      type = fallbackType || 'mousedown';
     }
 
-    const event = new MouseEvent(type, {
-      clientX,
-      clientY,
-      screenX,
-      screenY,
-      bubbles: true,
-      cancelable: true,
-      buttons
-    });
+    if (type.startsWith('pointer')) {
+      type = type.replace('pointer', 'mouse');
+    }
 
-    this.forwardTarget.dispatchEvent(event);
+    const mouseEvent = new MouseEvent(type, baseInit);
+    this.forwardTarget.dispatchEvent(mouseEvent);
   }
 
   startPolygon(pos) {
