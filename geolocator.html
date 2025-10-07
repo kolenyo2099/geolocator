@@ -499,7 +499,10 @@
               <h4>Sun Elevation (Advanced)</h4>
               <p>Mark height and shadow measurements to estimate the sun elevation. Assign a ground plane if you need perspective correction.</p>
             </div>
-            <button class="sun-tools-close" type="button" onclick="toggleSunToolsPanel(false)" aria-label="Close sun tools">×</button>
+            <div class="sun-tools-header-actions">
+              <button class="help-btn sun-tools-help" type="button" onclick="showSunToolsHelp()" title="How to use the sun tools" aria-haspopup="dialog" aria-controls="sunHelpOverlay">?</button>
+              <button class="sun-tools-close" type="button" onclick="toggleSunToolsPanel(false)" aria-label="Close sun tools">×</button>
+            </div>
           </div>
           <div class="sun-tools-body">
             <div class="sun-tools-assignments">
@@ -529,6 +532,35 @@
               <ul id="sunWarnings"></ul>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sun Tools Help Overlay -->
+  <div class="sun-help-overlay" id="sunHelpOverlay" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="sunHelpTitle">
+    <div class="sun-help-content" role="document">
+      <div class="sun-help-header">
+        <h2 id="sunHelpTitle">☀️ Sun Tools Guide</h2>
+        <button class="sun-help-close" type="button" onclick="hideSunToolsHelp()" aria-label="Close sun tools guide">×</button>
+      </div>
+      <div class="sun-help-body">
+        <p>The sun tools convert the relationship between an object's height and its shadow into a solar elevation estimate. Follow these steps to collect accurate measurements:</p>
+        <ol>
+          <li><strong>Mark the height arrow.</strong> Select <em>Mark Height Arrow</em> and draw a line from the base of the object to the top. Use straight edges like flagpoles, trees, or building corners.</li>
+          <li><strong>Mark the shadow arrow.</strong> Choose <em>Mark Shadow Arrow</em> and trace the object's shadow from the base toward the sun. Align the arrow with clear shadow edges for best results.</li>
+          <li><strong>Assign a ground plane (optional).</strong> If the photo is tilted, pick <em>Assign Ground Plane</em> and outline a flat surface to correct the perspective before calculating the angle.</li>
+          <li><strong>Add a real-world height (optional).</strong> Enter a known height to turn the relative measurement into a real-world distance check.</li>
+          <li><strong>Compute the angle.</strong> Click <em>Compute Angle</em> to display the sun's elevation and review any notes or warnings.</li>
+        </ol>
+        <div class="sun-help-examples">
+          <h3>Example Scenarios</h3>
+          <ul>
+            <li><strong>Street scene:</strong> Use a streetlight pole for the height arrow and its shadow on the pavement. If the camera is tilted, assign the road surface as the ground plane.</li>
+            <li><strong>Building facade:</strong> Trace the height along a window edge and the shadow cast on the sidewalk. Enter the building floor height if known to validate the measurement.</li>
+            <li><strong>Landscape photo:</strong> Mark a tree trunk and its shadow. Even without a known height, the computed angle lets you compare against solar ephemeris data for the capture time.</li>
+          </ul>
+          <p class="sun-help-tip">Tip: Keep arrows tight to the object's edges. Short, precise arrows produce more reliable sun angles.</p>
         </div>
       </div>
     </div>
