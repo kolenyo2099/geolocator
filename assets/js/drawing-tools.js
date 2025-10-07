@@ -16,6 +16,10 @@ const DRAWING_DEFAULTS = {
   fillOpacity: 0.2
 };
 
+const SUN_ASSIGNMENT_ID_ATTR = '__sunAssignmentGuid';
+const SUN_ASSIGNMENT_ID_KEY = typeof Symbol === 'function' ? Symbol('sunAssignmentGuid') : SUN_ASSIGNMENT_ID_ATTR;
+let sunAssignmentIdCounter = 0;
+
 function hexToRgba(hex, opacity) {
   const stripped = hex.replace('#', '');
   const bigint = parseInt(stripped, 16);
@@ -1739,9 +1743,18 @@ class DrawingRouter {
     this.sunMeasurement.pendingRole = role;
 
     if (shape) {
-      const result = this.attemptSunArrowAssignment(role, shape, panelKey, { directSelection: true });
-      if (result === 'assigned' || result === 'cleared') {
-        return;
+      const otherRole = role === 'height' ? 'shadow' : 'height';
+      const selectedRole = shape.getAttr ? shape.getAttr('sunAssignmentRole') : null;
+      const conflictsWithOther = this.sunMeasurement[otherRole]
+        && shapesMatch(this.sunMeasurement[otherRole].shape, shape);
+      if (!conflictsWithOther && (!selectedRole || selectedRole === role)) {
+        const result = this.attemptSunArrowAssignment(role, shape, panelKey, {
+          directSelection: true,
+          suppressConflicts: true
+        });
+        if (result === 'assigned' || result === 'cleared') {
+          return;
+        }
       }
     }
 
@@ -1752,18 +1765,6 @@ class DrawingRouter {
     }
 
     this.updateSunAssignmentPointerMode();
-  }
-
-  updateSunAssignmentPointerMode() {
-    if (!this.konvaManager) return;
-    if (typeof this.konvaManager.setPointerOverride !== 'function') return;
-    if (this.sunMeasurement.pendingRole) {
-      this.konvaManager.setPointerOverride('all');
-    } else if (typeof this.konvaManager.clearPointerOverride === 'function') {
-      this.konvaManager.clearPointerOverride();
-    } else {
-      this.konvaManager.setPointerOverride(null);
-    }
   }
 
   updateSunAssignmentPointerMode() {
@@ -1829,10 +1830,12 @@ class DrawingRouter {
     this.updateSunAssignmentPointerMode();
   }
 
-  attemptSunArrowAssignment(role, shape, panelKey, _options = {}) {
+  attemptSunArrowAssignment(role, shape, panelKey, options = {}) {
     if (!shape || typeof shape.getAttr !== 'function') {
       return 'ignored';
     }
+
+    const { suppressConflicts = false } = options;
 
     if (shape.getAttr('shapeType') !== 'arrow') {
       const label = role === 'height' ? 'height' : 'shadow';
@@ -1858,19 +1861,23 @@ class DrawingRouter {
     const otherRole = role === 'height' ? 'shadow' : 'height';
     const otherEntry = this.sunMeasurement[otherRole];
     if (otherEntry && otherEntry.shape && !isShapeDestroyed(otherEntry.shape) && shapesMatch(otherEntry.shape, shape)) {
-      const label = role === 'height' ? 'height' : 'shadow';
-      const otherLabel = otherRole === 'height' ? 'height' : 'shadow';
-      this.sunMeasurement.warnings = [`This arrow is already assigned as the ${otherLabel} measurement. Select a different arrow for the ${label} measurement.`];
-      this.updateSunMeasurementUI();
+      if (!suppressConflicts) {
+        const label = role === 'height' ? 'height' : 'shadow';
+        const otherLabel = otherRole === 'height' ? 'height' : 'shadow';
+        this.sunMeasurement.warnings = [`This arrow is already assigned as the ${otherLabel} measurement. Select a different arrow for the ${label} measurement.`];
+        this.updateSunMeasurementUI();
+      }
       return 'conflict';
     }
 
     const currentAssignment = shape.getAttr('sunAssignmentRole');
     if (currentAssignment && currentAssignment !== role) {
-      const currentLabel = currentAssignment === 'height' ? 'height' : 'shadow';
-      const desiredLabel = role === 'height' ? 'height' : 'shadow';
-      this.sunMeasurement.warnings = [`This arrow is already assigned as the ${currentLabel} measurement. Select a different arrow for the ${desiredLabel} measurement.`];
-      this.updateSunMeasurementUI();
+      if (!suppressConflicts) {
+        const currentLabel = currentAssignment === 'height' ? 'height' : 'shadow';
+        const desiredLabel = role === 'height' ? 'height' : 'shadow';
+        this.sunMeasurement.warnings = [`This arrow is already assigned as the ${currentLabel} measurement. Select a different arrow for the ${desiredLabel} measurement.`];
+        this.updateSunMeasurementUI();
+      }
       return 'conflict';
     }
 
@@ -1897,6 +1904,8 @@ class DrawingRouter {
         existing.shape.setAttr('sunAssignmentRole', null);
       }
     }
+
+    ensureSunAssignmentId(shape);
 
     const entry = { shape, panelKey, listeners: [] };
     const destroyHandler = () => {
@@ -2329,12 +2338,39 @@ function isShapeDestroyed(shape) {
   return Boolean(shape && typeof shape.isDestroyed === 'function' && shape.isDestroyed());
 }
 
+function ensureSunAssignmentId(shape) {
+  if (!shape) return null;
+  if (shape[SUN_ASSIGNMENT_ID_KEY]) {
+    return shape[SUN_ASSIGNMENT_ID_KEY];
+  }
+
+  let existing = null;
+  if (typeof shape.getAttr === 'function') {
+    existing = shape.getAttr(SUN_ASSIGNMENT_ID_ATTR);
+  }
+
+  if (!existing) {
+    existing = `sun-${sunAssignmentIdCounter += 1}`;
+    if (typeof shape.setAttr === 'function') {
+      shape.setAttr(SUN_ASSIGNMENT_ID_ATTR, existing);
+    }
+  }
+
+  try {
+    shape[SUN_ASSIGNMENT_ID_KEY] = existing;
+  } catch (err) {
+    // Ignore assignment issues (frozen objects etc.). Attr already set if possible.
+  }
+
+  return existing;
+}
+
 function shapesMatch(a, b) {
   if (!a || !b) return false;
   if (a === b) return true;
-  const idA = typeof a._id === 'number' ? a._id : (typeof a.getAttr === 'function' ? Number(a.getAttr('_id')) : NaN);
-  const idB = typeof b._id === 'number' ? b._id : (typeof b.getAttr === 'function' ? Number(b.getAttr('_id')) : NaN);
-  if (Number.isFinite(idA) && Number.isFinite(idB)) {
+  const idA = ensureSunAssignmentId(a);
+  const idB = ensureSunAssignmentId(b);
+  if (idA && idB) {
     return idA === idB;
   }
   return false;
