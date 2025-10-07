@@ -1766,6 +1766,18 @@ class DrawingRouter {
     }
   }
 
+  updateSunAssignmentPointerMode() {
+    if (!this.konvaManager) return;
+    if (typeof this.konvaManager.setPointerOverride !== 'function') return;
+    if (this.sunMeasurement.pendingRole) {
+      this.konvaManager.setPointerOverride('all');
+    } else if (typeof this.konvaManager.clearPointerOverride === 'function') {
+      this.konvaManager.clearPointerOverride();
+    } else {
+      this.konvaManager.setPointerOverride(null);
+    }
+  }
+
   hasPendingSunAssignment() {
     return Boolean(this.sunMeasurement.pendingRole);
   }
@@ -1814,6 +1826,7 @@ class DrawingRouter {
       this.sunMeasurement.pendingRole = role;
       this.updateSunAssignmentPointerMode();
     }
+    this.updateSunAssignmentPointerMode();
   }
 
   attemptSunArrowAssignment(role, shape, panelKey, _options = {}) {
