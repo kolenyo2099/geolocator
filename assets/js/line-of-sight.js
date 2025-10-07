@@ -321,11 +321,15 @@ async function initializePeakFinder() {
     document.getElementById('mapCanvas').style.display = 'none';
     document.getElementById('view3DContainer').classList.remove('active');
     document.getElementById('peakFinderContainer').classList.add('active');
-    
+
     document.getElementById('viewToggleBtn').style.display = 'flex';
     document.getElementById('viewInfoBar').classList.add('visible');
     document.getElementById('viewToggleIcon').textContent = '🗺️';
     document.getElementById('viewToggleText').textContent = 'Back to 2D Map';
+  }
+
+  if (typeof syncDrawingPanel === 'function') {
+    syncDrawingPanel();
   }
   
   if (peakFinderPanel) {
@@ -381,6 +385,10 @@ function hidePeakFinder() {
   document.getElementById('peakFinderContainer').classList.remove('active');
   if (currentView === 'peakfinder') {
     currentView = '2d';
+  }
+
+  if (typeof syncDrawingPanel === 'function') {
+    syncDrawingPanel();
   }
 }
 
