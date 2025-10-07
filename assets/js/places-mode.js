@@ -224,6 +224,9 @@ let drawDetachedView = '2d';
 
 function syncDrawingPanel() {
   if (typeof drawingRouter === 'undefined') return;
+  if (drawingRouter && drawingRouter.konvaManager && typeof drawingRouter.konvaManager.cancelForwarding === 'function') {
+    drawingRouter.konvaManager.cancelForwarding();
+  }
   if (mapMode !== 'draw') {
     drawingRouter.setActivePanel(null);
     return;

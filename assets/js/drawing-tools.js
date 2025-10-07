@@ -44,6 +44,8 @@ class KonvaPanel {
     this.overlay.style.height = '100%';
     this.overlay.style.pointerEvents = 'none';
     this.pointerEnabled = false;
+    this.boundHandleWheel = (event) => this.handleWheel(event);
+    this.overlay.addEventListener('wheel', this.boundHandleWheel, { passive: false });
     const overlayZIndex = options.zIndex != null ? options.zIndex : 30;
     this.overlay.style.zIndex = String(overlayZIndex);
 
@@ -87,6 +89,8 @@ class KonvaPanel {
     this.drawingShape = null;
     this.pendingPolygon = null;
     this.forwarding = false;
+    this.forwardingGuards = null;
+    this.forwardingPointerId = null;
 
     this.stage.on('mousedown touchstart', (evt) => this.onPointerDown(evt));
     this.stage.on('mousemove touchmove', (evt) => this.onPointerMove(evt));
@@ -564,33 +568,61 @@ class KonvaPanel {
     if (evt.target === this.stage) {
       this.transformer.nodes([]);
       this.layer.draw();
+      this.forwardPointerEvent(evt, 'click');
     }
   }
 
   onDoubleClick(evt) {
-    if (this.router.state.tool !== 'polygon') return;
-    evt.cancelBubble = true;
-    this.finishPolygon();
+    if (this.router.state.tool === 'polygon') {
+      evt.cancelBubble = true;
+      this.finishPolygon();
+      return;
+    }
+
+    if (this.router.state.tool === 'pan' && evt.target === this.stage) {
+      this.forwardPointerEvent(evt, 'dblclick');
+    }
   }
 
   startForwarding(evt, tool) {
     if (!this.forwardTarget) return;
+    if (this.forwarding) return;
     this.forwarding = true;
     this.overlay.style.pointerEvents = 'none';
+    const source = evt && (evt.evt || evt);
+    this.forwardingPointerId = (source && typeof source.pointerId === 'number')
+      ? source.pointerId
+      : null;
     this.forwardPointerEvent(evt, 'mousedown');
+    this.attachForwardingGuards();
   }
 
-  stopForwarding(evt) {
-    if (!this.forwarding) return;
-    this.forwardPointerEvent(evt, 'mouseup');
-    this.forwarding = false;
-    this.overlay.style.pointerEvents = this.pointerEnabled ? 'auto' : 'none';
+  stopForwarding(evt, fallbackType = 'mouseup') {
+    if (!this.forwarding) {
+      this.detachForwardingGuards();
+      return;
+    }
+
+    try {
+      this.forwardPointerEvent(evt, fallbackType);
+    } finally {
+      this.forwarding = false;
+      this.forwardingPointerId = null;
+      this.overlay.style.pointerEvents = this.pointerEnabled ? 'auto' : 'none';
+      this.detachForwardingGuards();
+    }
   }
 
   cancelForwarding() {
-    if (!this.forwarding) return;
+    if (!this.forwarding) {
+      this.detachForwardingGuards();
+      return;
+    }
+
     this.forwarding = false;
+    this.forwardingPointerId = null;
     this.overlay.style.pointerEvents = this.pointerEnabled ? 'auto' : 'none';
+    this.detachForwardingGuards();
   }
 
   clearSelection() {
@@ -645,13 +677,17 @@ class KonvaPanel {
   }
 
   forwardPointerEvent(evt, fallbackType) {
-    if (!this.forwardTarget || !evt) return;
-    const source = evt.evt;
-    if (!source) return;
+    if (!this.forwardTarget) return;
 
-    let type = source.type || fallbackType;
+    let source = evt ? (evt.evt || evt) : null;
+    let type = (source && source.type) || fallbackType;
     if (!type) return;
 
+    if (!source) {
+      source = this.createFallbackPointerSource(type);
+    }
+
+    const isEndEvent = typeof type === 'string' && /up$|cancel$|click$/.test(type);
     const baseInit = {
       bubbles: true,
       cancelable: true,
@@ -660,30 +696,12 @@ class KonvaPanel {
       screenX: source.screenX ?? 0,
       screenY: source.screenY ?? 0,
       button: source.button ?? 0,
-      buttons: source.buttons ?? (type.endsWith('up') ? 0 : 1),
+      buttons: source.buttons ?? (isEndEvent ? 0 : 1),
       altKey: source.altKey ?? false,
       ctrlKey: source.ctrlKey ?? false,
       metaKey: source.metaKey ?? false,
       shiftKey: source.shiftKey ?? false
     };
-
-    if (typeof PointerEvent !== 'undefined' && source instanceof PointerEvent) {
-      const pointerEvent = new PointerEvent(type, {
-        ...baseInit,
-        pointerId: source.pointerId ?? 0,
-        width: source.width ?? 1,
-        height: source.height ?? 1,
-        pressure: source.pressure ?? (type === 'pointerup' ? 0 : 0.5),
-        tangentialPressure: source.tangentialPressure ?? 0,
-        tiltX: source.tiltX ?? 0,
-        tiltY: source.tiltY ?? 0,
-        twist: source.twist ?? 0,
-        pointerType: source.pointerType || 'mouse',
-        isPrimary: source.isPrimary ?? true
-      });
-      this.forwardTarget.dispatchEvent(pointerEvent);
-      return;
-    }
 
     if (typeof TouchEvent !== 'undefined' && source instanceof TouchEvent) {
       const touch = source.touches[0] || source.changedTouches[0];
@@ -720,12 +738,176 @@ class KonvaPanel {
       type = fallbackType || 'mousedown';
     }
 
-    if (type.startsWith('pointer')) {
-      type = type.replace('pointer', 'mouse');
+    if (typeof type === 'string' && type.startsWith('pointer')) {
+      if (typeof PointerEvent !== 'undefined') {
+        const pointerEvent = new PointerEvent(type, {
+          ...baseInit,
+          pointerId: source.pointerId ?? 0,
+          width: source.width ?? 1,
+          height: source.height ?? 1,
+          pressure: source.pressure ?? (type === 'pointerup' || type === 'pointercancel' ? 0 : 0.5),
+          tangentialPressure: source.tangentialPressure ?? 0,
+          tiltX: source.tiltX ?? 0,
+          tiltY: source.tiltY ?? 0,
+          twist: source.twist ?? 0,
+          pointerType: source.pointerType || 'mouse',
+          isPrimary: source.isPrimary ?? true
+        });
+        this.forwardTarget.dispatchEvent(pointerEvent);
+        return;
+      }
+
+      type = type === 'pointercancel'
+        ? 'mouseup'
+        : type.replace('pointer', 'mouse');
     }
 
-    const mouseEvent = new MouseEvent(type, baseInit);
+    let mouseType = typeof type === 'string' ? type : 'mousedown';
+    if (mouseType.startsWith('touch')) {
+      const touchToMouse = {
+        touchstart: 'mousedown',
+        touchmove: 'mousemove',
+        touchend: 'mouseup',
+        touchcancel: 'mouseup'
+      };
+      mouseType = touchToMouse[mouseType] || 'mousedown';
+    }
+
+    const mouseEvent = new MouseEvent(mouseType, baseInit);
     this.forwardTarget.dispatchEvent(mouseEvent);
+  }
+
+  handleWheel(event) {
+    if (!this.forwardTarget) return;
+    if (!this.router || !this.router.state || this.router.state.tool !== 'pan') return;
+    if (event.defaultPrevented) return;
+
+    const wheelInit = {
+      bubbles: true,
+      cancelable: true,
+      clientX: event.clientX ?? 0,
+      clientY: event.clientY ?? 0,
+      screenX: event.screenX ?? 0,
+      screenY: event.screenY ?? 0,
+      deltaX: event.deltaX ?? 0,
+      deltaY: event.deltaY ?? 0,
+      deltaZ: event.deltaZ ?? 0,
+      deltaMode: event.deltaMode ?? 0,
+      ctrlKey: event.ctrlKey ?? false,
+      altKey: event.altKey ?? false,
+      shiftKey: event.shiftKey ?? false,
+      metaKey: event.metaKey ?? false
+    };
+
+    let forwarded;
+    if (typeof WheelEvent === 'function') {
+      forwarded = new WheelEvent('wheel', wheelInit);
+    } else {
+      forwarded = new CustomEvent('wheel', { bubbles: true, cancelable: true });
+      Object.assign(forwarded, wheelInit);
+    }
+
+    this.forwardTarget.dispatchEvent(forwarded);
+    if (typeof event.preventDefault === 'function') {
+      event.preventDefault();
+    }
+  }
+
+  createFallbackPointerSource(type) {
+    const normalized = typeof type === 'string' ? type : 'pointerdown';
+    const isPointer = normalized.startsWith('pointer');
+    const isEnd = /up$|cancel$|click$/.test(normalized);
+    return {
+      type: normalized,
+      clientX: 0,
+      clientY: 0,
+      screenX: 0,
+      screenY: 0,
+      button: 0,
+      buttons: isEnd ? 0 : 1,
+      altKey: false,
+      ctrlKey: false,
+      metaKey: false,
+      shiftKey: false,
+      pointerId: 0,
+      width: 1,
+      height: 1,
+      pressure: isEnd ? 0 : 0.5,
+      tangentialPressure: 0,
+      tiltX: 0,
+      tiltY: 0,
+      twist: 0,
+      pointerType: isPointer ? 'mouse' : undefined,
+      isPrimary: true
+    };
+  }
+
+  attachForwardingGuards() {
+    if (this.forwardingGuards) return;
+
+    const matchesPointer = (event) => {
+      if (!event || this.forwardingPointerId == null) {
+        return true;
+      }
+      if (typeof event.pointerId === 'number') {
+        return event.pointerId === this.forwardingPointerId;
+      }
+      return true;
+    };
+
+    const finalize = (event) => {
+      if (!matchesPointer(event)) return;
+      const fallback = event && event.type ? event.type : 'pointerup';
+      this.stopForwarding(event, fallback);
+    };
+
+    const cancel = (event) => {
+      if (!matchesPointer(event)) return;
+      const fallback = event && event.type ? event.type : 'pointercancel';
+      this.stopForwarding(event, fallback);
+    };
+
+    const handleBlur = () => {
+      if (!this.forwarding) return;
+      this.stopForwarding(null, 'pointercancel');
+    };
+
+    const handleVisibility = () => {
+      if (document.visibilityState !== 'visible' && this.forwarding) {
+        this.stopForwarding(null, 'pointercancel');
+      }
+    };
+
+    window.addEventListener('pointerup', finalize, true);
+    window.addEventListener('pointercancel', cancel, true);
+    window.addEventListener('mouseup', finalize, true);
+    window.addEventListener('touchend', finalize, true);
+    window.addEventListener('touchcancel', cancel, true);
+    window.addEventListener('blur', handleBlur);
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    this.forwardingGuards = {
+      finalize,
+      cancel,
+      handleBlur,
+      handleVisibility
+    };
+  }
+
+  detachForwardingGuards() {
+    if (!this.forwardingGuards) return;
+    const { finalize, cancel, handleBlur, handleVisibility } = this.forwardingGuards;
+    window.removeEventListener('pointerup', finalize, true);
+    window.removeEventListener('pointercancel', cancel, true);
+    window.removeEventListener('mouseup', finalize, true);
+    window.removeEventListener('touchend', finalize, true);
+    window.removeEventListener('touchcancel', cancel, true);
+    window.removeEventListener('blur', handleBlur);
+    document.removeEventListener('visibilitychange', handleVisibility);
+    this.forwardingGuards = null;
+    if (!this.forwarding) {
+      this.forwardingPointerId = null;
+    }
   }
 
   startPolygon(pos) {
