@@ -1501,7 +1501,7 @@ class KonvaManager {
 
   panelDefinitions() {
     return [
-      { key: 'map-overlay', selector: '#map', forwardSelector: '#mapCanvas', zIndex: 1600 },
+      { key: 'map-overlay', selector: '#map', forwardSelector: '#mapCanvas', zIndex: 900 },
       { key: 'image', selector: '.image-canvas-container', forwardSelector: '#imageCanvas' },
       { key: 'view3d', selector: '#view3DContainer', forwardSelector: '#view3DCanvas' },
       { key: 'peakfinder', selector: '#peakFinderContainer', forwardSelector: '#pfcanvas' },
