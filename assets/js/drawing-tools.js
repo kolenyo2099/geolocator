@@ -1692,6 +1692,9 @@ class DrawingRouter {
       ? this.konvaManager.getSelection()
       : null;
     const panelKey = selection?.key;
+    if (panelKey && typeof this.setActivePanel === 'function') {
+      this.setActivePanel(panelKey);
+    }
     const panel = selection?.panel || (panelKey ? this.konvaManager.getPanel(panelKey) : null);
     const shape = selection?.shape || (panel && typeof panel.getActiveShape === 'function' ? panel.getActiveShape() : panel?.activeShape);
     const existingEntry = this.sunMeasurement[role];
