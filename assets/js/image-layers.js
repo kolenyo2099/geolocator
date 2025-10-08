@@ -384,14 +384,15 @@ function getCurrentTool() {
 
 function getCanvasCoords(event, canvas) {
   const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
 
-  const canvasX = (event.clientX - rect.left);
-  const canvasY = (event.clientY - rect.top);
-
-  const worldX = (canvasX - imagePanX) / imageZoom + world.x;
-  const worldY = (canvasY - imagePanY) / imageZoom + world.y;
-
-  return { x: worldX, y: worldY };
+  const px = (event.clientX - rect.left) * scaleX;
+  const py = (event.clientY - rect.top) * scaleY;
+  return {
+    x: (px - imagePanX) / imageZoom,
+    y: (py - imagePanY) / imageZoom
+  };
 }
 
 function worldToLayerCoords(worldX, worldY, layer, options = {}) {
@@ -460,167 +461,68 @@ function findTopVisibleLayerAt(worldX, worldY) {
   return null;
 }
 
-const world = {
-  x: 0,
-  y: 0,
-  width: 0,
-  height: 0,
-  padding: 500
-};
-
-function getRotatedBoundingBox(layer) {
-  const w = layer.image.width * layer.scale;
-  const h = layer.image.height * layer.scale;
-  const angle = (layer.rotation || 0) * Math.PI / 180;
-
-  const sin = Math.abs(Math.sin(angle));
-  const cos = Math.abs(Math.cos(angle));
-
-  const boundWidth = w * cos + h * sin;
-  const boundHeight = w * sin + h * cos;
-
-  return {
-    x: layer.x,
-    y: layer.y,
-    width: boundWidth,
-    height: boundHeight,
-  };
-}
-
-function calculateTotalBoundingBox() {
-  if (imageLayers.length === 0) {
-    const container = document.querySelector('.image-canvas-container');
-    return {
-      x: 0,
-      y: 0,
-      width: container.clientWidth > 0 ? container.clientWidth : 500,
-      height: container.clientHeight > 0 ? container.clientHeight : 500,
-    };
-  }
-
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-
-  imageLayers.forEach(layer => {
-    if (layer.visible) {
-      const box = getRotatedBoundingBox(layer);
-      minX = Math.min(minX, box.x);
-      minY = Math.min(minY, box.y);
-      maxX = Math.max(maxX, box.x + box.width);
-      maxY = Math.max(maxY, box.y + box.height);
-    }
-  });
-
-  const boundingBox = {
-    x: minX - world.padding,
-    y: minY - world.padding,
-    width: (maxX - minX) + 2 * world.padding,
-    height: (maxY - minY) + 2 * world.padding,
-  };
-  console.log('Calculated Bounding Box:', boundingBox);
-  return boundingBox;
+function initializeCanvas() {
+  const container = document.querySelector('.image-canvas-container');
+  imageCanvas.width = container.clientWidth;
+  imageCanvas.height = container.clientHeight;
+  imageCanvas.style.width = container.clientWidth + 'px';
+  imageCanvas.style.height = container.clientHeight + 'px';
 }
 
 window.addEventListener('resize', () => {
   if (imageLayers.length > 0) {
+    initializeCanvas();
     redrawAllLayers();
   }
 });
 
-imageUpload.addEventListener('change', async (e) => {
+imageUpload.addEventListener('change', (e) => {
   const files = Array.from(e.target.files);
-  e.target.value = ''; // Clear the input immediately
-
-  const container = document.querySelector('.image-canvas-container');
-
-  // 1. Calculate the center of the viewport in WORLD coordinates before adding new images
-  const initialWorld = calculateTotalBoundingBox();
-  const targetX = (container.clientWidth / 2 - imagePanX) / imageZoom + initialWorld.x;
-  const targetY = (container.clientHeight / 2 - imagePanY) / imageZoom + initialWorld.y;
-
-  const newLayers = await Promise.all(files.map((file, index) => {
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const img = new Image();
-        img.onload = () => {
-          // 2. Add new images at the target position (with a small offset for multiples)
-          const layer = {
-            id: Date.now() + Math.random(),
-            name: file.name,
-            image: img,
-            x: targetX + (index * 50),
-            y: targetY + (index * 50),
-            opacity: 1.0,
-            visible: true,
-            scale: 1.0,
-            rotation: 0
-          };
-          resolve(layer);
+  files.forEach(file => {
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const layer = {
+          id: Date.now() + Math.random(),
+          name: file.name,
+          image: img,
+          x: 50,
+          y: 50,
+          opacity: 1.0,
+          visible: true,
+          scale: 1.0,
+          rotation: 0
         };
-        img.onerror = () => resolve(null);
-        img.src = event.target.result;
+        
+        imageLayers.push(layer);
+        updateLayersList();
+        
+        if (imageLayers.length === 1) {
+          document.querySelector('.no-image').style.display = 'none';
+          document.querySelector('.image-canvas-container').style.display = 'flex';
+          imagePanel.classList.remove('hidden');
+          initializeCanvas();
+        }
+        
+        redrawAllLayers();
       };
-      reader.readAsDataURL(file);
-    });
-  }));
-
-  const successfullyLoadedLayers = newLayers.filter(l => l !== null);
-  if (successfullyLoadedLayers.length === 0) return;
-
-  const firstNewLayer = successfullyLoadedLayers[0];
-  imageLayers.push(...successfullyLoadedLayers);
-
-  if (imageLayers.length > 0) {
-    document.querySelector('.no-image').style.display = 'none';
-    document.querySelector('.image-canvas-container').style.display = 'flex';
-    imagePanel.classList.remove('hidden');
-  }
-
-  updateLayersList();
-
-  // 3. First redraw calculates the new world bounds
-  redrawAllLayers();
-
-  // 4. Calculate where the new image's center ended up on screen
-  const finalWorld = world; // world is a global updated by redrawAllLayers
-  const newLayerCenterX = firstNewLayer.x + (firstNewLayer.image.width * firstNewLayer.scale / 2);
-  const newLayerCenterY = firstNewLayer.y + (firstNewLayer.image.height * firstNewLayer.scale / 2);
-
-  const onScreenX = (newLayerCenterX - finalWorld.x) * imageZoom + imagePanX;
-  const onScreenY = (newLayerCenterY - finalWorld.y) * imageZoom + imagePanY;
-
-  // 5. Calculate the difference between the actual center and the desired center
-  const viewCenterXPixels = container.clientWidth / 2;
-  const viewCenterYPixels = container.clientHeight / 2;
-
-  const deltaX = viewCenterXPixels - onScreenX;
-  const deltaY = viewCenterYPixels - onScreenY;
-
-  // 6. Apply this difference to the pan
-  imagePanX += deltaX;
-  imagePanY += deltaY;
-
-  // 7. Redraw again with the corrected pan
-  redrawAllLayers();
+      img.src = event.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+  e.target.value = '';
 });
 
 function addProtractorImage() {
   const img = new Image();
   img.onload = () => {
-    const container = document.querySelector('.image-canvas-container');
-    const initialWorld = calculateTotalBoundingBox();
-    const targetX = (container.clientWidth / 2 - imagePanX) / imageZoom + initialWorld.x;
-    const targetY = (container.clientHeight / 2 - imagePanY) / imageZoom + initialWorld.y;
-
     const layer = {
       id: Date.now() + Math.random(),
       name: 'Protractor',
       image: img,
-      x: targetX,
-      y: targetY,
+      x: 50,
+      y: 50,
       opacity: 1.0,
       visible: true,
       scale: 1.0,
@@ -628,34 +530,16 @@ function addProtractorImage() {
     };
     
     imageLayers.push(layer);
+    updateLayersList();
     
-    if (imageLayers.length > 0) {
+    if (imageLayers.length === 1) {
       document.querySelector('.no-image').style.display = 'none';
       document.querySelector('.image-canvas-container').style.display = 'flex';
       imagePanel.classList.remove('hidden');
+      initializeCanvas();
     }
     
-    updateLayersList();
-    redrawAllLayers(); // First redraw
-
-    // Recenter logic
-    const finalWorld = world;
-    const newLayerCenterX = layer.x + (layer.image.width * layer.scale / 2);
-    const newLayerCenterY = layer.y + (layer.image.height * layer.scale / 2);
-
-    const onScreenX = (newLayerCenterX - finalWorld.x) * imageZoom + imagePanX;
-    const onScreenY = (newLayerCenterY - finalWorld.y) * imageZoom + imagePanY;
-
-    const viewCenterXPixels = container.clientWidth / 2;
-    const viewCenterYPixels = container.clientHeight / 2;
-
-    const deltaX = viewCenterXPixels - onScreenX;
-    const deltaY = viewCenterYPixels - onScreenY;
-
-    imagePanX += deltaX;
-    imagePanY += deltaY;
-
-    redrawAllLayers(); // Second redraw
+    redrawAllLayers();
   };
   img.onerror = () => {
     alert('Failed to load protractor image. Please make sure protractor.png exists in the same directory as this file.');
@@ -704,7 +588,7 @@ imageCanvas.addEventListener('drop', (e) => {
   handleDrop(e);
 }, false);
 
-async function handleDrop(e) {
+function handleDrop(e) {
   e.preventDefault();
   e.stopPropagation();
   const dt = e.dataTransfer;
@@ -716,49 +600,40 @@ async function handleDrop(e) {
     alert('Please drop only image files.');
     return;
   }
-
-  // Calculate drop position in world coordinates
-  const dropCoords = getCanvasCoords(e, imageCanvas);
-
-  const newLayers = await Promise.all(imageFiles.map((file, index) => {
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const img = new Image();
-        img.onload = () => {
-          const layer = {
-            id: Date.now() + Math.random(),
-            name: file.name,
-            image: img,
-            x: dropCoords.x + (index * 50), // Position at drop location
-            y: dropCoords.y + (index * 50),
-            opacity: 1.0,
-            visible: true,
-            scale: 1.0,
-            rotation: 0
-          };
-          resolve(layer);
+  
+  imageFiles.forEach(file => {
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const layer = {
+          id: Date.now() + Math.random(),
+          name: file.name,
+          image: img,
+          x: 50,
+          y: 50,
+          opacity: 1.0,
+          visible: true,
+          scale: 1.0,
+          rotation: 0
         };
-        img.onerror = () => resolve(null);
-        img.src = event.target.result;
+        
+        imageLayers.push(layer);
+        updateLayersList();
+        
+        if (imageLayers.length === 1) {
+          document.querySelector('.no-image').style.display = 'none';
+          document.querySelector('.image-canvas-container').style.display = 'flex';
+          imagePanel.classList.remove('hidden');
+          initializeCanvas();
+        }
+        
+        redrawAllLayers();
       };
-      reader.readAsDataURL(file);
-    });
-  }));
-
-  const successfullyLoadedLayers = newLayers.filter(l => l !== null);
-  if (successfullyLoadedLayers.length === 0) return;
-
-  imageLayers.push(...successfullyLoadedLayers);
-
-  if (imageLayers.length > 0) {
-    document.querySelector('.no-image').style.display = 'none';
-    document.querySelector('.image-canvas-container').style.display = 'flex';
-    imagePanel.classList.remove('hidden');
-  }
-
-  updateLayersList();
-  redrawAllLayers();
+      img.src = event.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
 }
 
 function updateLayersList() {
@@ -1014,34 +889,15 @@ function deselectImageLayer() {
 window.deselectImageLayer = deselectImageLayer;
 
 function redrawAllLayers() {
-  const newWorld = calculateTotalBoundingBox();
-  Object.assign(world, newWorld);
-
-  const container = document.querySelector('.image-canvas-container');
-  const dpr = window.devicePixelRatio || 1;
-  const canvasWidth = container.clientWidth;
-  const canvasHeight = container.clientHeight;
-
-  imageCanvas.width = canvasWidth * dpr;
-  imageCanvas.height = canvasHeight * dpr;
-  imageCanvas.style.width = canvasWidth + 'px';
-  imageCanvas.style.height = canvasHeight + 'px';
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, imageCanvas.width, imageCanvas.height);
+  ctx.setTransform(imageZoom, 0, 0, imageZoom, imagePanX, imagePanY);
   
-  ctx.scale(dpr, dpr);
-  ctx.clearRect(0, 0, canvasWidth, canvasHeight);
-
-  // Pan and zoom transform
-  ctx.save();
-  ctx.translate(imagePanX, imagePanY);
-  ctx.scale(imageZoom, imageZoom);
-
-  // World transform (centers content)
-  ctx.translate(-world.x, -world.y);
-
   imageLayers.forEach(layer => {
     if (layer.visible) {
       ctx.save();
       
+      // Apply rotation around the center of the image
       const w = layer.image.width * layer.scale;
       const h = layer.image.height * layer.scale;
       const centerX = layer.x + w / 2;
@@ -1060,41 +916,49 @@ function redrawAllLayers() {
         ctx.save();
         ctx.globalAlpha = 1.0;
         
+        // Draw bounding box with rotation
         ctx.translate(centerX, centerY);
         ctx.rotate((layer.rotation || 0) * Math.PI / 180);
         ctx.translate(-centerX, -centerY);
         
         ctx.strokeStyle = '#9D2235';
         ctx.lineWidth = Math.max(1, 2 / imageZoom);
-        ctx.setLineDash([10 / imageZoom, 5 / imageZoom]);
+        ctx.setLineDash([10, 5]);
         ctx.strokeRect(layer.x, layer.y, w, h);
         ctx.setLineDash([]);
         
         const handleSize = 8 / imageZoom;
         ctx.fillStyle = '#9D2235';
         ctx.strokeStyle = '#fff';
-        ctx.lineWidth = Math.max(1, 1 / imageZoom);
+        ctx.lineWidth = Math.max(1, 2 / imageZoom);
         
-        const handles = [
-          { x: layer.x, y: layer.y },
-          { x: layer.x + w, y: layer.y },
-          { x: layer.x, y: layer.y + h },
-          { x: layer.x + w, y: layer.y + h },
-        ];
-
-        handles.forEach(handle => {
-          ctx.beginPath();
-          ctx.arc(handle.x, handle.y, handleSize, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.stroke();
-        });
+        // Corner resize handles
+        ctx.beginPath();
+        ctx.arc(layer.x, layer.y, handleSize, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        
+        ctx.beginPath();
+        ctx.arc(layer.x + w, layer.y, handleSize, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        
+        ctx.beginPath();
+        ctx.arc(layer.x, layer.y + h, handleSize, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        
+        ctx.beginPath();
+        ctx.arc(layer.x + w, layer.y + h, handleSize, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
         
         ctx.restore();
       }
     }
   });
-
-  ctx.restore(); // Restore from pan/zoom/world transform
+  
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
 }
 
 function getResizeHandle(x, y, layer) {
@@ -1164,16 +1028,22 @@ imageCanvas.addEventListener('mousedown', (e) => {
       }
     }
     
-    const topLayerResult = findTopVisibleLayerAt(coords.x, coords.y);
-    if (topLayerResult) {
-      const { layer } = topLayerResult;
-      isDraggingLayer = true;
-      selectedLayerId = layer.id;
-      dragOffsetX = coords.x - layer.x;
-      dragOffsetY = coords.y - layer.y;
-      updateLayersList();
-      redrawAllLayers();
-      return;
+    for (let i = imageLayers.length - 1; i >= 0; i--) {
+      const layer = imageLayers[i];
+      if (!layer.visible) continue;
+      
+      const right = layer.x + layer.image.width * layer.scale;
+      const bottom = layer.y + layer.image.height * layer.scale;
+      
+      if (coords.x >= layer.x && coords.x <= right &&
+          coords.y >= layer.y && coords.y <= bottom) {
+        isDraggingLayer = true;
+        selectedLayerId = layer.id;
+        dragOffsetX = coords.x - layer.x;
+        dragOffsetY = coords.y - layer.y;
+        updateLayersList();
+        return;
+      }
     }
   }
   
