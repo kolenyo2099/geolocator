@@ -1013,10 +1013,7 @@ function deselectImageLayer() {
 
 window.deselectImageLayer = deselectImageLayer;
 
-function redrawAllLayers() {
-  const newWorld = calculateTotalBoundingBox();
-  Object.assign(world, newWorld);
-
+function fastRedrawAllLayers() {
   const container = document.querySelector('.image-canvas-container');
   const dpr = window.devicePixelRatio || 1;
   const canvasWidth = container.clientWidth;
@@ -1026,7 +1023,7 @@ function redrawAllLayers() {
   imageCanvas.height = canvasHeight * dpr;
   imageCanvas.style.width = canvasWidth + 'px';
   imageCanvas.style.height = canvasHeight + 'px';
-  
+
   ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, canvasWidth, canvasHeight);
 
@@ -1089,6 +1086,90 @@ function redrawAllLayers() {
           ctx.stroke();
         });
         
+        ctx.restore();
+      }
+    }
+  });
+
+  ctx.restore(); // Restore from pan/zoom/world transform
+}
+
+function redrawAllLayers() {
+  const newWorld = calculateTotalBoundingBox();
+  Object.assign(world, newWorld);
+
+  const container = document.querySelector('.image-canvas-container');
+  const dpr = window.devicePixelRatio || 1;
+  const canvasWidth = container.clientWidth;
+  const canvasHeight = container.clientHeight;
+
+  imageCanvas.width = canvasWidth * dpr;
+  imageCanvas.height = canvasHeight * dpr;
+  imageCanvas.style.width = canvasWidth + 'px';
+  imageCanvas.style.height = canvasHeight + 'px';
+
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+
+  // Pan and zoom transform
+  ctx.save();
+  ctx.translate(imagePanX, imagePanY);
+  ctx.scale(imageZoom, imageZoom);
+
+  // World transform (centers content)
+  ctx.translate(-world.x, -world.y);
+
+  imageLayers.forEach(layer => {
+    if (layer.visible) {
+      ctx.save();
+
+      const w = layer.image.width * layer.scale;
+      const h = layer.image.height * layer.scale;
+      const centerX = layer.x + w / 2;
+      const centerY = layer.y + h / 2;
+
+      ctx.translate(centerX, centerY);
+      ctx.rotate((layer.rotation || 0) * Math.PI / 180);
+      ctx.translate(-centerX, -centerY);
+
+      ctx.globalAlpha = layer.opacity;
+      ctx.drawImage(layer.image, layer.x, layer.y, w, h);
+
+      ctx.restore();
+
+      if (layer.id === selectedLayerId) {
+        ctx.save();
+        ctx.globalAlpha = 1.0;
+
+        ctx.translate(centerX, centerY);
+        ctx.rotate((layer.rotation || 0) * Math.PI / 180);
+        ctx.translate(-centerX, -centerY);
+
+        ctx.strokeStyle = '#9D2235';
+        ctx.lineWidth = Math.max(1, 2 / imageZoom);
+        ctx.setLineDash([10 / imageZoom, 5 / imageZoom]);
+        ctx.strokeRect(layer.x, layer.y, w, h);
+        ctx.setLineDash([]);
+
+        const handleSize = 8 / imageZoom;
+        ctx.fillStyle = '#9D2235';
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = Math.max(1, 1 / imageZoom);
+
+        const handles = [
+          { x: layer.x, y: layer.y },
+          { x: layer.x + w, y: layer.y },
+          { x: layer.x, y: layer.y + h },
+          { x: layer.x + w, y: layer.y + h },
+        ];
+
+        handles.forEach(handle => {
+          ctx.beginPath();
+          ctx.arc(handle.x, handle.y, handleSize, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+        });
+
         ctx.restore();
       }
     }
@@ -1202,7 +1283,7 @@ imageCanvas.addEventListener('mousemove', (e) => {
     if (layer) {
       layer.x = coords.x - dragOffsetX;
       layer.y = coords.y - dragOffsetY;
-      redrawAllLayers();
+      fastRedrawAllLayers();
     }
   } else if (isResizingLayer && selectedLayerId) {
     const layer = imageLayers.find(l => l.id === selectedLayerId);
@@ -1240,9 +1321,11 @@ imageCanvas.addEventListener('mouseup', (e) => {
   const tool = getCurrentTool();
   if (isDraggingLayer) {
     isDraggingLayer = false;
+    redrawAllLayers(); // Final redraw to update world bounds
   } else if (isResizingLayer) {
     isResizingLayer = false;
     resizeHandle = null;
+    redrawAllLayers(); // Final redraw to update world bounds
   }
 
   if (tool === 'pan') {
