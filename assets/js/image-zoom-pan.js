@@ -48,7 +48,8 @@ imageContainer.addEventListener('mousemove', (e) => {
     e.preventDefault();
     imagePanX = e.clientX - panStartX;
     imagePanY = e.clientY - panStartY;
-    updateImageTransform();
+    fastRedrawAllLayers();
+    syncImageOverlay();
   }
 });
 
@@ -56,6 +57,7 @@ imageContainer.addEventListener('mouseup', (e) => {
   if (isPanning) {
     isPanning = false;
     imageContainer.classList.remove('panning');
+    updateImageTransform(); // Final redraw
   }
 });
 
@@ -63,6 +65,7 @@ imageContainer.addEventListener('mouseleave', () => {
   if (isPanning) {
     isPanning = false;
     imageContainer.classList.remove('panning');
+    updateImageTransform(); // Final redraw
   }
 });
 
