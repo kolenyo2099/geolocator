@@ -109,6 +109,12 @@ class KonvaPanel {
 
   setPointerEnabled(enabled) {
     this.pointerEnabled = !!enabled;
+    
+    // Don't change pointer events while actively drawing with continuous tools
+    if (this.drawingShape && this.router.state.tool === 'freehand') {
+      return;
+    }
+    
     if (this.forwarding) return;
 
     const tool = this.router.state.tool;
@@ -440,10 +446,13 @@ class KonvaPanel {
 
     if (tool === 'pan') {
       if (evt.target === this.stage) {
+        this._clickForwarded = true;
         this.startForwarding(evt, tool);
       }
       return;
     }
+
+    this._clickForwarded = false;
 
     if (tool === 'note') {
       const pos = this.getPointerPosition(evt);
@@ -473,6 +482,10 @@ class KonvaPanel {
 
     if (this.router.state.tool === 'freehand') {
       evt.cancelBubble = true;
+      // Ensure we're not in forwarding mode before starting freehand drawing
+      if (this.forwarding) {
+        this.cancelForwarding();
+      }
       this.startFreehand(pos);
       return;
     }
@@ -487,6 +500,19 @@ class KonvaPanel {
   }
 
   onPointerMove(evt) {
+    // Special case: if we're drawing freehand, never forward
+    const tool = this.router.state.tool;
+    if (tool === 'freehand' && this.drawingShape) {
+      const pos = this.getPointerPosition(evt);
+      if (pos) {
+        const line = this.drawingShape;
+        const newPoints = [...line.points(), pos.x, pos.y];
+        line.points(newPoints);
+        this.layer.batchDraw();
+      }
+      return;
+    }
+
     if (this.forwarding) {
       this.forwardPointerEvent(evt, 'mousemove');
       return;
@@ -506,7 +532,6 @@ class KonvaPanel {
     const pos = this.getPointerPosition(evt);
     if (!pos) return;
 
-    const tool = this.router.state.tool;
     if (tool === 'rect') {
       this.updateRect(pos);
     } else if (tool === 'ellipse') {
@@ -526,6 +551,7 @@ class KonvaPanel {
   onPointerUp(evt) {
     if (this.forwarding) {
       this.stopForwarding(evt);
+      this._clickForwarded = false;
       return;
     }
 
@@ -578,7 +604,11 @@ class KonvaPanel {
     if (evt.target === this.stage) {
       this.transformer.nodes([]);
       this.layer.draw();
-      this.forwardPointerEvent(evt, 'click');
+      // Only forward if we haven't already forwarded during pointer down/up
+      if (!this._clickForwarded) {
+        this.forwardPointerEvent(evt, 'click');
+      }
+      this._clickForwarded = false;
     }
   }
 
@@ -1762,9 +1792,19 @@ class DrawingRouter {
     this.activePanel = panelKey;
     if (panelKey === 'map') {
       this.konvaManager.setActivePanel(null);
+      // Ensure map-overlay doesn't interfere with Geoman tools
+      const mapOverlayPanel = this.konvaManager.getPanel('map-overlay');
+      if (mapOverlayPanel && this.usesGeoman()) {
+        mapOverlayPanel.overlay.style.pointerEvents = 'none';
+      }
       this.enableGeomanForCurrentTool();
     } else {
       this.disableGeomanDraw();
+      // Re-enable map-overlay if switching away from Geoman
+      const mapOverlayPanel = this.konvaManager.getPanel('map-overlay');
+      if (mapOverlayPanel && panelKey === 'map-overlay') {
+        mapOverlayPanel.setPointerEnabled(true);
+      }
       if (panelKey) {
         this.konvaManager.setActivePanel(panelKey);
       }
@@ -1898,6 +1938,20 @@ class DrawingRouter {
   selectTool(tool) {
     this.state.tool = tool;
     this.konvaManager.cancelForwarding();
+    
+    // For continuous drawing tools like freehand, ensure panels are ready
+    if (tool === 'freehand') {
+      // Force pointer events to be enabled immediately for all active panels
+      this.konvaManager.panels.forEach((panel, key) => {
+        if (key === this.activePanel || (this.activePanel === 'map' && key === 'map-overlay')) {
+          panel.overlay.style.pointerEvents = 'auto';
+        }
+      });
+    }
+    
+    // Update pointer behavior immediately to prevent missed first clicks
+    this.konvaManager.updatePointerBehavior(tool);
+    
     if (tool !== 'pan') {
       this.konvaManager.clearSelections();
       if (typeof window.deselectImageLayer === 'function') {
@@ -1917,7 +1971,6 @@ class DrawingRouter {
       }
     }
     this.updateToolbarUI();
-    this.konvaManager.updatePointerBehavior(tool);
   }
 
   selectColor(color) {

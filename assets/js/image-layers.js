@@ -894,12 +894,16 @@ function redrawAllLayers() {
   ctx.setTransform(imageZoom, 0, 0, imageZoom, imagePanX, imagePanY);
   
   imageLayers.forEach(layer => {
-    if (layer.visible) {
-      ctx.save();
-      
-      // Apply rotation around the center of the image
-      const w = layer.image.width * layer.scale;
-      const h = layer.image.height * layer.scale;
+    // Skip invisible layers or images that haven't loaded yet
+    if (!layer.visible || !layer.image || !layer.image.complete || layer.image.naturalWidth === 0) {
+      return;
+    }
+    
+    ctx.save();
+    
+    // Apply rotation around the center of the image
+    const w = layer.image.width * layer.scale;
+    const h = layer.image.height * layer.scale;
       const centerX = layer.x + w / 2;
       const centerY = layer.y + h / 2;
       
@@ -1001,6 +1005,7 @@ imageCanvas.addEventListener('mousedown', (e) => {
   const tool = getCurrentTool();
 
   if (tool === 'note') {
+    e.stopPropagation();
     const rect = imageCanvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
@@ -1011,11 +1016,13 @@ imageCanvas.addEventListener('mousedown', (e) => {
   if (tool === 'pan') {
     const coords = getCanvasCoords(e, imageCanvas);
     
+    // Check if clicking on a resize handle first
     if (selectedLayerId) {
       const selectedLayer = imageLayers.find(l => l.id === selectedLayerId);
       if (selectedLayer && selectedLayer.visible) {
         const handle = getResizeHandle(coords.x, coords.y, selectedLayer);
         if (handle) {
+          e.stopPropagation();
           isResizingLayer = true;
           resizeHandle = handle;
           resizeStartX = coords.x;
@@ -1028,6 +1035,7 @@ imageCanvas.addEventListener('mousedown', (e) => {
       }
     }
     
+    // Check if clicking on an image layer
     for (let i = imageLayers.length - 1; i >= 0; i--) {
       const layer = imageLayers[i];
       if (!layer.visible) continue;
@@ -1037,6 +1045,7 @@ imageCanvas.addEventListener('mousedown', (e) => {
       
       if (coords.x >= layer.x && coords.x <= right &&
           coords.y >= layer.y && coords.y <= bottom) {
+        e.stopPropagation();
         isDraggingLayer = true;
         selectedLayerId = layer.id;
         dragOffsetX = coords.x - layer.x;
@@ -1047,6 +1056,8 @@ imageCanvas.addEventListener('mousedown', (e) => {
     }
   }
   
+  // If we reach here with a drawing tool (not pan), let the event bubble to Konva
+  // Don't call stopPropagation() so Konva can handle it
 });
 
 imageCanvas.addEventListener('mousemove', (e) => {

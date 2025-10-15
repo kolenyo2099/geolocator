@@ -159,6 +159,8 @@
       gridEnabled = true;
       gridLayer.addTo(map);
       updateGrid();
+      // Register event listeners when grid is enabled
+      map.on('moveend zoomend rotate', updateGrid);
       syncUI();
     }
   }
@@ -168,6 +170,8 @@
       gridEnabled = false;
       gridLayer.clearLayers();
       map.removeLayer(gridLayer);
+      // Remove event listeners when grid is disabled
+      map.off('moveend zoomend rotate', updateGrid);
       syncUI();
     }
   }
@@ -282,7 +286,8 @@
   new GridMenuControl({ position: 'topright' }).addTo(map);
 
   setMenuOpen(false);
-
-  map.on('moveend zoomend rotate', updateGrid);
+  
+  // Note: Event listeners for map updates are now registered in enableGrid()
+  // and removed in disableGrid() to prevent unnecessary updates when grid is disabled
   syncUI();
 })();

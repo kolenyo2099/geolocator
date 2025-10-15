@@ -1,5 +1,15 @@
 /* ========== STREET VIEW & MAPILLARY ========== */
+
+// AbortController for canceling in-flight Mapillary requests
+let mapillaryAbortController = null;
+
 function showStreetView() {
+  // Cancel any pending Mapillary requests
+  if (mapillaryAbortController) {
+    mapillaryAbortController.abort();
+    mapillaryAbortController = null;
+  }
+  
   if (!streetViewMarker) {
     alert('Please click on the map first to select a location');
     return;
@@ -7,25 +17,44 @@ function showStreetView() {
   
   currentView = 'streetview';
   
-  document.getElementById('map').style.display = 'none';
-  document.getElementById('mapCanvas').style.display = 'none';
-  document.getElementById('view3DContainer').classList.remove('active');
-  document.getElementById('mapillaryContainer').classList.remove('active');
+  const mapEl = document.getElementById('map');
+  const mapCanvasEl = document.getElementById('mapCanvas');
+  const view3D = document.getElementById('view3DContainer');
+  const mapillaryEl = document.getElementById('mapillaryContainer');
+  
+  if (mapEl) mapEl.style.display = 'none';
+  if (mapCanvasEl) mapCanvasEl.style.display = 'none';
+  if (view3D) view3D.classList.remove('active');
+  if (mapillaryEl) mapillaryEl.classList.remove('active');
   
   const container = document.getElementById('streetViewContainer');
+  if (!container) {
+    console.error('Street View container not found');
+    return;
+  }
   container.classList.add('active');
   
   const lat = streetViewMarker.lat;
   const lng = streetViewMarker.lng;
   const iframe = document.getElementById('streetViewPano');
   
-  iframe.src = `https://www.google.com/maps/embed/v1/streetview?location=${lat},${lng}&key=AIzaSyBFw0Qbyq9zTFTd-tUY6dZWTgaQzuU17R8&heading=0&pitch=0&fov=90`;
+  if (iframe) {
+    iframe.src = `https://www.google.com/maps/embed/v1/streetview?location=${lat},${lng}&key=AIzaSyBFw0Qbyq9zTFTd-tUY6dZWTgaQzuU17R8&heading=0&pitch=0&fov=90`;
+  }
 
   console.log(`Street View loaded at ${lat}, ${lng}`);
   if (typeof syncDrawingPanel === 'function') syncDrawingPanel();
 }
 
 async function showMapillary() {
+  // Cancel any previous request
+  if (mapillaryAbortController) {
+    mapillaryAbortController.abort();
+  }
+  
+  // Create new AbortController for this request
+  mapillaryAbortController = new AbortController();
+  
   if (!streetViewMarker) {
     alert('Please click on the map first to select a location');
     return;
@@ -51,24 +80,32 @@ async function showMapillary() {
       throw new Error('Mapillary helper not available. Refresh the page.');
     }
 
-    statusEl.textContent = 'Authenticating with Mapillary...';
+    if (statusEl) {
+      statusEl.textContent = 'Authenticating with Mapillary...';
+    }
 
     try {
       accessToken = await mapillaryAuth.getAccessToken();
     } catch (authError) {
       console.error('Mapillary auth error:', authError);
-      statusEl.textContent = 'Mapillary token missing. Update credentials below.';
+      if (statusEl) {
+        statusEl.textContent = 'Mapillary token missing. Update credentials below.';
+      }
       alert('Mapillary now requires a short-lived access token. Save your client ID and secret in the Mapillary settings panel, refresh the token, then try again.');
       return;
     }
 
-    statusEl.textContent = 'Searching for Mapillary imagery...';
+    if (statusEl) {
+      statusEl.textContent = 'Searching for Mapillary imagery...';
+    }
     const offset = 0.001;
     const bbox = `${lng-offset},${lat-offset},${lng+offset},${lat+offset}`;
 
     const apiUrl = `https://graph.mapillary.com/images?access_token=${encodeURIComponent(accessToken)}&fields=id,computed_geometry&bbox=${bbox}&limit=1`;
 
-    const response = await fetch(apiUrl);
+    const response = await fetch(apiUrl, {
+      signal: mapillaryAbortController.signal
+    });
 
     if (!response.ok) {
       if (response.status === 401 || response.status === 403) {
@@ -93,7 +130,9 @@ async function showMapillary() {
 
     if (!data.data || data.data.length === 0) {
       alert('No Mapillary imagery found at this location. Try a major city (Paris, NYC, Amsterdam), urban/downtown areas, or Google Street View instead (better coverage).');
-      document.getElementById('status').textContent = 'No Mapillary imagery found';
+      if (statusEl) {
+        statusEl.textContent = 'No Mapillary imagery found';
+      }
       return;
     }
     
@@ -101,16 +140,27 @@ async function showMapillary() {
     
     currentView = 'mapillary';
     
-    document.getElementById('map').style.display = 'none';
-    document.getElementById('mapCanvas').style.display = 'none';
-    document.getElementById('view3DContainer').classList.remove('active');
-    document.getElementById('streetViewContainer').classList.remove('active');
+    const mapEl = document.getElementById('map');
+    const mapCanvasEl = document.getElementById('mapCanvas');
+    const view3DEl = document.getElementById('view3DContainer');
+    const streetViewEl = document.getElementById('streetViewContainer');
+    
+    if (mapEl) mapEl.style.display = 'none';
+    if (mapCanvasEl) mapCanvasEl.style.display = 'none';
+    if (view3DEl) view3DEl.classList.remove('active');
+    if (streetViewEl) streetViewEl.classList.remove('active');
     
     const container = document.getElementById('mapillaryContainer');
+    if (!container) {
+      console.error('Mapillary container not found');
+      return;
+    }
     container.classList.add('active');
     
     const viewerDiv = document.getElementById('mapillaryViewer');
-    viewerDiv.innerHTML = '';
+    if (viewerDiv) {
+      viewerDiv.innerHTML = '';
+    }
     
     if (mapillaryViewer) {
       try {
@@ -129,24 +179,47 @@ async function showMapillary() {
       imageId: imageId
     });
 
-    statusEl.textContent = 'Mapillary loaded successfully';
+    if (statusEl) {
+      statusEl.textContent = 'Mapillary loaded successfully';
+    }
 
     if (typeof syncDrawingPanel === 'function') syncDrawingPanel();
   } catch (error) {
+    // Don't show error if request was aborted
+    if (error.name === 'AbortError') {
+      console.log('Mapillary request cancelled');
+      return;
+    }
     console.error('Mapillary error:', error);
     alert(`Failed to load Mapillary: ${error.message}. This location may not have coverage or the token may be invalid.`);
-    statusEl.textContent = 'Mapillary failed - check credentials or coverage';
+    if (statusEl) {
+      statusEl.textContent = 'Mapillary failed - check credentials or coverage';
+    }
     backToMap();
+  } finally {
+    mapillaryAbortController = null;
   }
 }
 
 function backToMap() {
-  document.getElementById('streetViewContainer').classList.remove('active');
-  document.getElementById('mapillaryContainer').classList.remove('active');
-  document.getElementById('view3DContainer').classList.remove('active');
+  // Cancel any pending Mapillary requests
+  if (mapillaryAbortController) {
+    mapillaryAbortController.abort();
+    mapillaryAbortController = null;
+  }
   
-  document.getElementById('map').style.display = 'block';
-  document.getElementById('mapCanvas').style.display = 'block';
+  const streetViewEl = document.getElementById('streetViewContainer');
+  const mapillaryEl = document.getElementById('mapillaryContainer');
+  const view3DEl = document.getElementById('view3DContainer');
+  const mapEl = document.getElementById('map');
+  const mapCanvasEl = document.getElementById('mapCanvas');
+  
+  if (streetViewEl) streetViewEl.classList.remove('active');
+  if (mapillaryEl) mapillaryEl.classList.remove('active');
+  if (view3DEl) view3DEl.classList.remove('active');
+  
+  if (mapEl) mapEl.style.display = 'block';
+  if (mapCanvasEl) mapCanvasEl.style.display = 'block';
   
   currentView = '2d';
   

@@ -6,13 +6,14 @@ let isPanning = false;
 let panStartX = 0;
 let panStartY = 0;
 
-const imageContainer = document.querySelector('.image-canvas-container');
+let imageContainer;
 
 function getActiveTool() {
   return (window.drawingRouter && drawingRouter.state && drawingRouter.state.tool) || 'pan';
 }
 
-imageContainer.addEventListener('wheel', (e) => {
+// Event handlers (will be registered in init)
+const wheelHandler = ((e) => {
   if (imageLayers.length === 0) return;
   
   e.preventDefault();
@@ -29,44 +30,58 @@ imageContainer.addEventListener('wheel', (e) => {
   
   imageZoom = newZoom;
   updateImageTransform();
-}, { passive: false });
+});
 
-imageContainer.addEventListener('mousedown', (e) => {
+const mouseDownHandler = ((e) => {
   const leftClick = e.button === 0;
   const midClick = e.button === 1;
-  if ((midClick || (leftClick && getActiveTool() === 'pan')) && !isDraggingLayer && !isResizingLayer) {
+  const tool = getActiveTool();
+  
+  // Don't start panning if using a drawing tool (let Konva handle it)
+  if (tool !== 'pan' && tool !== 'note' && leftClick) {
+    return;
+  }
+  
+  if ((midClick || (leftClick && tool === 'pan')) && !isDraggingLayer && !isResizingLayer) {
     e.preventDefault();
     isPanning = true;
     panStartX = e.clientX - imagePanX;
     panStartY = e.clientY - imagePanY;
-    imageContainer.classList.add('panning');
+    if (imageContainer) {
+      imageContainer.classList.add('panning');
+    }
   }
 });
 
-imageContainer.addEventListener('mousemove', (e) => {
+const mouseMoveHandler = ((e) => {
   if (isPanning) {
     e.preventDefault();
+    e.stopPropagation();
     imagePanX = e.clientX - panStartX;
     imagePanY = e.clientY - panStartY;
     updateImageTransform();
   }
 });
 
-imageContainer.addEventListener('mouseup', (e) => {
+const mouseUpHandler = ((e) => {
   if (isPanning) {
     isPanning = false;
-    imageContainer.classList.remove('panning');
+    if (imageContainer) {
+      imageContainer.classList.remove('panning');
+    }
   }
 });
 
-imageContainer.addEventListener('mouseleave', () => {
+const mouseLeaveHandler = (() => {
   if (isPanning) {
     isPanning = false;
-    imageContainer.classList.remove('panning');
+    if (imageContainer) {
+      imageContainer.classList.remove('panning');
+    }
   }
 });
 
-imageContainer.addEventListener('dblclick', (e) => {
+const dblClickHandler = ((e) => {
   if (e.target === imageContainer) {
     imageZoom = 1;
     imagePanX = 0;
@@ -100,4 +115,19 @@ function syncImageOverlay() {
   });
 }
 
-syncImageOverlay();
+// Initialize when DOM is ready
+document.addEventListener('DOMContentLoaded', () => {
+  imageContainer = document.querySelector('.image-canvas-container');
+  
+  if (imageContainer) {
+    // Register event listeners
+    imageContainer.addEventListener('wheel', wheelHandler, { passive: false });
+    imageContainer.addEventListener('mousedown', mouseDownHandler);
+    imageContainer.addEventListener('mousemove', mouseMoveHandler);
+    imageContainer.addEventListener('mouseup', mouseUpHandler);
+    imageContainer.addEventListener('mouseleave', mouseLeaveHandler);
+    imageContainer.addEventListener('dblclick', dblClickHandler);
+  }
+  
+  syncImageOverlay();
+});

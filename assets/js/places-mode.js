@@ -35,6 +35,9 @@ const allOsmCategories = [...new Set(Object.values(osmCategories).flat())];
 let activeFilters = new Set(allOsmCategories);
 let allPlaces = [];
 
+// AbortController for canceling in-flight requests
+let overpassAbortController = null;
+
 // Track drawn markers per summary category (e.g., "amenity: cafe")
 let markersByCategory = new Map();
 // Categories toggled off from the Discovery Summary
@@ -222,6 +225,9 @@ let groundDetachedView = '2d';
 let groundControlsWereVisible = false;
 let drawDetachedView = '2d';
 
+// Track timeouts for cleanup
+let viewToggleTimeouts = [];
+
 function syncDrawingPanel() {
   if (typeof drawingRouter === 'undefined') return;
   if (drawingRouter && drawingRouter.konvaManager && typeof drawingRouter.konvaManager.cancelForwarding === 'function') {
@@ -244,6 +250,12 @@ function syncDrawingPanel() {
 }
 
 function detachPlacesMode() {
+  // Cancel any in-flight requests
+  if (overpassAbortController) {
+    overpassAbortController.abort();
+    overpassAbortController = null;
+  }
+
   placesClusterAttached = map.hasLayer(cluster);
   if (placesClusterAttached) {
     map.removeLayer(cluster);
@@ -280,8 +292,10 @@ function restorePlacesMode() {
 
 function detachGroundMode() {
   const controls = document.getElementById('streetViewControls');
-  groundControlsWereVisible = controls.classList.contains('visible');
-  controls.classList.remove('visible');
+  if (controls) {
+    groundControlsWereVisible = controls.classList.contains('visible');
+    controls.classList.remove('visible');
+  }
 
   if (streetViewMarker && streetViewMarker.marker && map.hasLayer(streetViewMarker.marker)) {
     map.removeLayer(streetViewMarker.marker);
@@ -293,7 +307,9 @@ function detachGroundMode() {
   groundDetachedView = currentView;
   if ((currentView === 'streetview' || currentView === 'mapillary') && typeof backToMap === 'function') {
     backToMap();
-    controls.classList.remove('visible');
+    if (controls) {
+      controls.classList.remove('visible');
+    }
   }
 }
 
@@ -302,9 +318,14 @@ function restoreGroundMode() {
 
   if (streetViewMarker && streetViewMarker.marker && streetViewMarker.visible) {
     streetViewMarker.marker.addTo(map);
-    controls.classList.add('visible');
-    document.getElementById('status').textContent = 'Location selected - Choose a view option';
-  } else {
+    if (controls) {
+      controls.classList.add('visible');
+    }
+    const statusEl = document.getElementById('status');
+    if (statusEl) {
+      statusEl.textContent = 'Location selected - Choose a view option';
+    }
+  } else if (controls) {
     controls.classList.toggle('visible', groundControlsWereVisible);
   }
 
@@ -406,17 +427,22 @@ function setMapMode(mode) {
     }
   } else if (mode === 'ground') {
     document.getElementById('status').textContent = 'Click map for ground view';
-  } else if (mode === 'draw') {
+  } else   if (mode === 'draw') {
     document.getElementById('status').textContent = 'Drawing mode active!';
 
     if (currentView === '2d') {
-      map.dragging.disable();
+      // Disable map dragging to prevent interference with drawing tools
+      if (map.dragging._enabled) {
+        map.dragging.disable();
+      }
     } else if (currentView === '3d') {
       view3DCanvas.classList.add('active');
       setup3DViewCanvas();
     } else {
       if (typeof backToMap === 'function') backToMap();
-      map.dragging.disable();
+      if (map.dragging._enabled) {
+        map.dragging.disable();
+      }
     }
   } else if (mode === 'los') {
     document.getElementById('status').textContent = 'Click point A (observer)';
@@ -438,6 +464,10 @@ function setMapMode(mode) {
 }
 
 function toggleMapView() {
+  // Clear any pending timeouts
+  viewToggleTimeouts.forEach(id => clearTimeout(id));
+  viewToggleTimeouts = [];
+  
   const map2D = document.getElementById('map');
   const mapCanvas2D = document.getElementById('mapCanvas');
   const view3D = document.getElementById('view3DContainer');
@@ -449,78 +479,89 @@ function toggleMapView() {
   if (currentView === '2d') {
     if (losMode === 'peakfinder') {
       currentView = 'peakfinder';
-      peakFinder.classList.add('active');
+      if (peakFinder) peakFinder.classList.add('active');
     } else {
       currentView = '3d';
-      view3D.classList.add('active');
-      if (mapMode === 'draw') {
+      if (view3D) view3D.classList.add('active');
+      if (mapMode === 'draw' && view3DCanvasEl) {
         view3DCanvasEl.classList.add('active');
-        setup3DViewCanvas();
+        if (typeof setup3DViewCanvas === 'function') {
+          setup3DViewCanvas();
+        }
       }
     }
     
-    map2D.style.display = 'none';
-    mapCanvas2D.style.display = 'none';
-    map.dragging.enable();
+    if (map2D) map2D.style.display = 'none';
+    if (mapCanvas2D) mapCanvas2D.style.display = 'none';
+    if (map && map.dragging) map.dragging.enable();
     
-    toggleBtn.style.display = 'flex';
-    infoBar.classList.add('visible');
+    if (toggleBtn) toggleBtn.style.display = 'flex';
+    if (infoBar) infoBar.classList.add('visible');
     
-    document.getElementById('viewToggleIcon').textContent = '🗺️';
-    document.getElementById('viewToggleText').textContent = 'Back to 2D Map';
+    const toggleIcon = document.getElementById('viewToggleIcon');
+    const toggleText = document.getElementById('viewToggleText');
+    if (toggleIcon) toggleIcon.textContent = '🗺️';
+    if (toggleText) toggleText.textContent = 'Back to 2D Map';
     
     if (window.map3D && currentView === '3d') {
-      setTimeout(() => {
+      const timeoutId = setTimeout(() => {
         window.map3D.resize();
-        setup3DViewCanvas();
+        if (typeof setup3DViewCanvas === 'function') {
+          setup3DViewCanvas();
+        }
       }, 100);
+      viewToggleTimeouts.push(timeoutId);
     }
   } else {
     currentView = '2d';
-    map2D.style.display = 'block';
-    mapCanvas2D.style.display = 'block';
-    view3D.classList.remove('active');
-    peakFinder.classList.remove('active');
-    view3DCanvasEl.classList.remove('active');
-    toggleBtn.style.display = 'none';
-    infoBar.classList.remove('visible');
+    if (map2D) map2D.style.display = 'block';
+    if (mapCanvas2D) mapCanvas2D.style.display = 'block';
+    if (view3D) view3D.classList.remove('active');
+    if (peakFinder) peakFinder.classList.remove('active');
+    if (view3DCanvasEl) view3DCanvasEl.classList.remove('active');
+    if (toggleBtn) toggleBtn.style.display = 'none';
+    if (infoBar) infoBar.classList.remove('visible');
 
-    if (mapMode === 'draw') {
+    if (mapMode === 'draw' && map && map.dragging) {
       map.dragging.disable();
     }
 
-    setTimeout(() => {
-      map.invalidateSize();
+    const timeoutId = setTimeout(() => {
+      if (map && typeof map.invalidateSize === 'function') {
+        map.invalidateSize();
+      }
     }, 100);
+    viewToggleTimeouts.push(timeoutId);
   }
 
   syncDrawingPanel();
 }
 
+// Initialize cluster (will be added to map in init)
 const cluster = L.markerClusterGroup({
   chunkedLoading: true,
   spiderfyOnMaxZoom: true,
   showCoverageOnHover: false,
   zoomToBoundsOnClick: true
 });
-map.addLayer(cluster);
 
 let pin = null, circle = null;
-const rSlider = document.getElementById('radiusSlider');
-const rLabel = document.getElementById('radiusLabel');
-const status = document.getElementById('status');
-const summaryPanel = document.getElementById('summaryPanel');
+let rSlider, rLabel, status, summaryPanel;
+let mapClickHandler;
 
-function syncRadiusLabel() { rLabel.textContent = rSlider.value; }
-syncRadiusLabel();
+function syncRadiusLabel() { 
+  if (rLabel && rSlider) {
+    rLabel.textContent = rSlider.value; 
+  }
+}
 
-rSlider.addEventListener('input', () => {
-  syncRadiusLabel();
-  if (circle) circle.setRadius(+rSlider.value);
-  if (pin) queryOverpass();
-});
-
-map.on('click', e => {
+// Map click handler function (will be registered in init)
+mapClickHandler = (e => {
+  // Ignore clicks when in drawing-related modes to prevent interference with drawing tools
+  if (mapMode === 'draw' || mapMode === 'angles') {
+    return;
+  }
+  
   if (mapMode === 'places') {
     cluster.clearLayers();
     if (pin) map.removeLayer(pin);
@@ -539,7 +580,10 @@ map.on('click', e => {
 
     queryOverpass();
     
-    document.getElementById('streetViewControls').classList.remove('visible');
+    const streetViewControls = document.getElementById('streetViewControls');
+    if (streetViewControls) {
+      streetViewControls.classList.remove('visible');
+    }
   } else if (mapMode === 'ground') {
     if (streetViewMarker && streetViewMarker.marker) {
       map.removeLayer(streetViewMarker.marker);
@@ -558,8 +602,13 @@ map.on('click', e => {
     };
     
     const controls = document.getElementById('streetViewControls');
-    controls.classList.add('visible');
-    document.getElementById('status').textContent = 'Location selected - Choose a view option';
+    if (controls) {
+      controls.classList.add('visible');
+    }
+    const statusEl = document.getElementById('status');
+    if (statusEl) {
+      statusEl.textContent = 'Location selected - Choose a view option';
+    }
   } else if (mapMode === 'los') {
     handleLOSClick(e.latlng);
   }
@@ -579,16 +628,30 @@ function buildQuery(lat, lon, r) {
 }
 
 async function queryOverpass() {
+  // Cancel any previous request
+  if (overpassAbortController) {
+    overpassAbortController.abort();
+  }
+  
+  // Create new AbortController for this request
+  overpassAbortController = new AbortController();
+  
   const {lat, lng} = pin.getLatLng();
   const radius = rSlider.value;
-  status.textContent = 'Querying OpenStreetMap...';
-  summaryPanel.classList.remove('visible');
+  
+  if (status) {
+    status.textContent = 'Querying OpenStreetMap...';
+  }
+  if (summaryPanel) {
+    summaryPanel.classList.remove('visible');
+  }
 
   try {
     const res = await fetch('https://overpass-api.de/api/interpreter', {
       method: 'POST',
       body: buildQuery(lat.toFixed(6), lng.toFixed(6), radius),
-      headers: {'Content-Type': 'text/plain'}
+      headers: {'Content-Type': 'text/plain'},
+      signal: overpassAbortController.signal
     });
     
     if (!res.ok) throw new Error('Network error');
@@ -596,13 +659,24 @@ async function queryOverpass() {
     const data = await res.json();
     allPlaces = data.elements;
     
-    status.textContent = `Found ${allPlaces.length} places`;
+    if (status) {
+      status.textContent = `Found ${allPlaces.length} places`;
+    }
     filterAndDrawPlaces();
     
   } catch (err) {
+    // Don't show error if request was aborted
+    if (err.name === 'AbortError') {
+      console.log('Request cancelled');
+      return;
+    }
     console.error(err);
-    status.textContent = 'Failed to load data';
+    if (status) {
+      status.textContent = 'Failed to load data';
+    }
     allPlaces = [];
+  } finally {
+    overpassAbortController = null;
   }
 }
 
@@ -808,3 +882,38 @@ function centerMapOnPlace(lat, lon, name) {
     });
   }
 }
+
+// Initialize when DOM is ready
+document.addEventListener('DOMContentLoaded', () => {
+  // Get DOM element references
+  rSlider = document.getElementById('radiusSlider');
+  rLabel = document.getElementById('radiusLabel');
+  status = document.getElementById('status');
+  summaryPanel = document.getElementById('summaryPanel');
+  
+  // Initialize cluster on map
+  if (map && typeof map.addLayer === 'function') {
+    map.addLayer(cluster);
+  }
+  
+  // Initialize radius label
+  syncRadiusLabel();
+  
+  // Add event listeners
+  if (rSlider) {
+    rSlider.addEventListener('input', () => {
+      syncRadiusLabel();
+      if (circle && typeof circle.setRadius === 'function') {
+        circle.setRadius(+rSlider.value);
+      }
+      if (pin) queryOverpass();
+    });
+  }
+  
+  if (map && typeof map.on === 'function') {
+    map.on('click', mapClickHandler);
+  }
+  
+  // Initialize filters UI
+  initFilters();
+});

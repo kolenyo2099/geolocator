@@ -95,7 +95,7 @@ L.Control.RotationControl = L.Control.extend({
     function updateCompass() {
       const bearing = map.getBearing() || 0;
       const svg = compass.querySelector('svg');
-      svg.style.transform = `rotate(${-bearing}deg)`;
+      svg.style.transform = `rotate(${bearing}deg)`;
       bearingDisplay.textContent = Math.round(bearing) + '°';
     }
     
