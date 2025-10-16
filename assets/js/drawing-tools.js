@@ -91,6 +91,7 @@ class KonvaPanel {
     this.forwarding = false;
     this.forwardingGuards = null;
     this.forwardingPointerId = null;
+    this.drawingGuards = null;
 
     this.stage.on('mousedown touchstart', (evt) => this.onPointerDown(evt));
     this.stage.on('mousemove touchmove', (evt) => this.onPointerMove(evt));
@@ -109,20 +110,32 @@ class KonvaPanel {
 
   setPointerEnabled(enabled) {
     this.pointerEnabled = !!enabled;
-    
-    // Don't change pointer events while actively drawing with continuous tools
-    if (this.drawingShape && this.router.state.tool === 'freehand') {
-      return;
-    }
-    
     if (this.forwarding) return;
 
+    // CRITICAL: Never disable pointer events during active drawing
+    // This ensures mouseup/touchend events are always captured
+    if (this.drawingShape || this.pendingPolygon) {
+      this.overlay.style.pointerEvents = 'auto';
+      return;
+    }
+
     const tool = this.router.state.tool;
+    const isDrawingTool = this.router && typeof this.router.isDrawingTool === 'function' 
+      ? this.router.isDrawingTool(tool) 
+      : false;
+    
     // For panels that forward events (all except 'image'), if the pan tool
-    // is active, we want to be able to interact with the underlying canvas,
-    // so we disable pointer events on the overlay.
-    if (tool === 'pan' && this.key !== 'image') {
+    // is active AND we're not in a drawing tool mode, we want to be able to 
+    // interact with the underlying canvas, so we disable pointer events on the overlay.
+    // However, if enabled is true (panel is active) OR we're using a drawing tool, keep events enabled
+    if (tool === 'pan' && this.key !== 'image' && !enabled && !isDrawingTool) {
       this.overlay.style.pointerEvents = 'none';
+      return;
+    }
+
+    // If we're using a drawing tool, always enable pointer events regardless of enabled flag
+    if (isDrawingTool) {
+      this.overlay.style.pointerEvents = 'auto';
       return;
     }
 
@@ -133,6 +146,13 @@ class KonvaPanel {
     const width = this.container.clientWidth;
     const height = this.container.clientHeight;
     this.stage.size({ width, height });
+    
+    // Restore viewport transform after resize (important for image panel)
+    if (this.viewportTransform && (this.viewportTransform.scaleX !== 1 || this.viewportTransform.translateX !== 0 || this.viewportTransform.translateY !== 0)) {
+      this.stage.scale({ x: this.viewportTransform.scaleX, y: this.viewportTransform.scaleY });
+      this.stage.position({ x: this.viewportTransform.translateX, y: this.viewportTransform.translateY });
+    }
+    
     this.stage.draw();
   }
 
@@ -446,13 +466,10 @@ class KonvaPanel {
 
     if (tool === 'pan') {
       if (evt.target === this.stage) {
-        this._clickForwarded = true;
         this.startForwarding(evt, tool);
       }
       return;
     }
-
-    this._clickForwarded = false;
 
     if (tool === 'note') {
       const pos = this.getPointerPosition(evt);
@@ -482,10 +499,6 @@ class KonvaPanel {
 
     if (this.router.state.tool === 'freehand') {
       evt.cancelBubble = true;
-      // Ensure we're not in forwarding mode before starting freehand drawing
-      if (this.forwarding) {
-        this.cancelForwarding();
-      }
       this.startFreehand(pos);
       return;
     }
@@ -496,23 +509,12 @@ class KonvaPanel {
 
     this.drawingShape = shape;
     this.addShape(shape);
+    // Attach guards to ensure we capture mouseup even if it happens outside the canvas
+    this.attachDrawingGuards();
     evt.cancelBubble = true;
   }
 
   onPointerMove(evt) {
-    // Special case: if we're drawing freehand, never forward
-    const tool = this.router.state.tool;
-    if (tool === 'freehand' && this.drawingShape) {
-      const pos = this.getPointerPosition(evt);
-      if (pos) {
-        const line = this.drawingShape;
-        const newPoints = [...line.points(), pos.x, pos.y];
-        line.points(newPoints);
-        this.layer.batchDraw();
-      }
-      return;
-    }
-
     if (this.forwarding) {
       this.forwardPointerEvent(evt, 'mousemove');
       return;
@@ -532,6 +534,7 @@ class KonvaPanel {
     const pos = this.getPointerPosition(evt);
     if (!pos) return;
 
+    const tool = this.router.state.tool;
     if (tool === 'rect') {
       this.updateRect(pos);
     } else if (tool === 'ellipse') {
@@ -551,7 +554,6 @@ class KonvaPanel {
   onPointerUp(evt) {
     if (this.forwarding) {
       this.stopForwarding(evt);
-      this._clickForwarded = false;
       return;
     }
 
@@ -559,6 +561,7 @@ class KonvaPanel {
 
     const shape = this.drawingShape;
     this.drawingShape = null;
+    this.detachDrawingGuards();
     evt.cancelBubble = true;
 
     // Remove zero-sized shapes
@@ -578,12 +581,33 @@ class KonvaPanel {
       if (state.type === 'circle') {
         return Math.abs(state.radius) < 3;
       }
-      if (state.type === 'line' || state.type === 'arrow' || state.type === 'freehand') {
+      if (state.type === 'line' || state.type === 'arrow') {
         const pts = state.points;
         if (!pts || pts.length < 4) return true;
         const dx = pts[2] - pts[0];
         const dy = pts[3] - pts[1];
         return Math.sqrt(dx * dx + dy * dy) < 3;
+      }
+      if (state.type === 'freehand') {
+        const pts = state.points;
+        if (!pts || pts.length < 4) return true;
+        
+        // For freehand, check the bounding box of ALL points, not just first two
+        let minX = pts[0], maxX = pts[0];
+        let minY = pts[1], maxY = pts[1];
+        
+        for (let i = 0; i < pts.length; i += 2) {
+          minX = Math.min(minX, pts[i]);
+          maxX = Math.max(maxX, pts[i]);
+          minY = Math.min(minY, pts[i + 1]);
+          maxY = Math.max(maxY, pts[i + 1]);
+        }
+        
+        const width = maxX - minX;
+        const height = maxY - minY;
+        
+        // Consider degenerate if bounding box is too small
+        return width < 3 && height < 3;
       }
       return false;
     };
@@ -604,11 +628,7 @@ class KonvaPanel {
     if (evt.target === this.stage) {
       this.transformer.nodes([]);
       this.layer.draw();
-      // Only forward if we haven't already forwarded during pointer down/up
-      if (!this._clickForwarded) {
-        this.forwardPointerEvent(evt, 'click');
-      }
-      this._clickForwarded = false;
+      this.forwardPointerEvent(evt, 'click');
     }
   }
 
@@ -648,7 +668,8 @@ class KonvaPanel {
     } finally {
       this.forwarding = false;
       this.forwardingPointerId = null;
-      this.overlay.style.pointerEvents = this.pointerEnabled ? 'auto' : 'none';
+      // Restore pointer events, but respect active drawing state
+      this.setPointerEnabled(this.pointerEnabled);
       this.detachForwardingGuards();
     }
   }
@@ -661,7 +682,8 @@ class KonvaPanel {
 
     this.forwarding = false;
     this.forwardingPointerId = null;
-    this.overlay.style.pointerEvents = this.pointerEnabled ? 'auto' : 'none';
+    // Restore pointer events, but respect active drawing state
+    this.setPointerEnabled(this.pointerEnabled);
     this.detachForwardingGuards();
   }
 
@@ -950,8 +972,77 @@ class KonvaPanel {
     }
   }
 
+  attachDrawingGuards() {
+    if (this.drawingGuards) return;
+
+    const finishDrawing = (event) => {
+      if (!this.drawingShape) return;
+      // Synthesize a mouseup event on the stage
+      this.stage.fire('mouseup', {
+        type: 'mouseup',
+        target: this.stage,
+        evt: event
+      });
+    };
+
+    const cancelDrawing = (event) => {
+      if (!this.drawingShape) return;
+      // Cancel the drawing by removing the shape
+      const shape = this.drawingShape;
+      this.drawingShape = null;
+      this.removeShape(shape);
+      this.detachDrawingGuards();
+    };
+
+    const handleBlur = () => {
+      if (!this.drawingShape) return;
+      cancelDrawing(null);
+    };
+
+    const handleVisibility = () => {
+      if (document.visibilityState !== 'visible' && this.drawingShape) {
+        cancelDrawing(null);
+      }
+    };
+
+    // Attach window-level listeners to capture mouseup even if it happens outside the canvas
+    window.addEventListener('mouseup', finishDrawing, true);
+    window.addEventListener('touchend', finishDrawing, true);
+    window.addEventListener('pointerup', finishDrawing, true);
+    window.addEventListener('blur', handleBlur);
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    this.drawingGuards = {
+      finishDrawing,
+      cancelDrawing,
+      handleBlur,
+      handleVisibility
+    };
+  }
+
+  detachDrawingGuards() {
+    if (!this.drawingGuards) return;
+    const { finishDrawing, cancelDrawing, handleBlur, handleVisibility } = this.drawingGuards;
+    
+    if (finishDrawing) {
+      window.removeEventListener('mouseup', finishDrawing, true);
+      window.removeEventListener('touchend', finishDrawing, true);
+      window.removeEventListener('pointerup', finishDrawing, true);
+    }
+    if (handleBlur) {
+      window.removeEventListener('blur', handleBlur);
+    }
+    if (handleVisibility) {
+      document.removeEventListener('visibilitychange', handleVisibility);
+    }
+    
+    this.drawingGuards = null;
+  }
+
   startPolygon(pos) {
     if (!this.pendingPolygon) {
+      // Clear any active selection before starting polygon drawing
+      this.transformer.nodes([]);
       const style = this.styleAttributes();
       const line = new Konva.Line({
         ...style,
@@ -993,10 +1084,14 @@ class KonvaPanel {
   }
 
   startFreehand(pos) {
+    // Clear any active selection before starting freehand drawing
+    this.transformer.nodes([]);
     const line = this.createShape('freehand', pos);
     if (!line) return;
     this.drawingShape = line;
     this.addShape(line);
+    // Attach guards to ensure we capture mouseup even if it happens outside the canvas
+    this.attachDrawingGuards();
   }
 
   updateRect(pos) {
@@ -1561,8 +1656,31 @@ class KonvaManager {
       });
       this.panels.set(def.key, panel);
 
-      const focusHandler = () => {
-        if (def.key === 'map-overlay') {
+      const focusHandler = (event) => {
+        // Don't change focus if we're already on this panel
+        const isMapOverlay = def.key === 'map-overlay';
+        const currentPanel = this.router.activePanel;
+        const targetPanel = isMapOverlay ? this.router.desiredMapPanel() : def.key;
+        
+        // If we're already on the correct panel, don't trigger unnecessary state changes
+        if (currentPanel === targetPanel) {
+          return;
+        }
+        
+        // Check if the click is actually on a Konva element (starting to draw)
+        // If so, let the drawing handler deal with it, don't change focus
+        const isKonvaElement = event.target && (
+          event.target.classList.contains('konvajs-content') ||
+          event.target.tagName === 'CANVAS' && event.target.parentElement?.classList.contains('konvajs-content')
+        );
+        
+        // If clicking on Konva canvas with a drawing tool active, let the drawing start first
+        // The panel will be focused through the drawing event handlers
+        if (isKonvaElement && this.router.isDrawingTool && this.router.isDrawingTool()) {
+          return;
+        }
+        
+        if (isMapOverlay) {
           this.router.focusMapPanel();
         } else {
           this.router.setActivePanel(def.key);
@@ -1578,6 +1696,12 @@ class KonvaManager {
   }
 
   applyPointerState() {
+    const isKonvaDrawingTool = this.router && typeof this.router.isDrawingTool === 'function' 
+      && this.router.isDrawingTool(this.currentTool)
+      && (!this.router.usesGeoman || !this.router.usesGeoman(this.currentTool));
+    
+    const isPanTool = this.currentTool === 'pan';
+    
     this.panels.forEach((panel, panelKey) => {
       let shouldEnable = false;
 
@@ -1586,10 +1710,24 @@ class KonvaManager {
       } else if (this.pointerOverride === 'none') {
         shouldEnable = false;
       } else {
-        shouldEnable = this.activePanel && panelKey === this.activePanel;
-        if (panelKey === 'map-overlay' && this.router && typeof this.router.usesGeoman === 'function') {
-          if (this.router.usesGeoman(this.currentTool)) {
+        // CRITICAL: For Konva drawing tools (freehand, ellipse, arrow), enable ALL panels
+        // This allows drawing to work everywhere: map, images, 3D views, etc.
+        if (isKonvaDrawingTool) {
+          shouldEnable = true;
+        } else {
+          // For pan tool: disable overlays for view3d, peakfinder, streetview, mapillary
+          // so users can interact with the underlying viewers
+          if (isPanTool && (panelKey === 'view3d' || panelKey === 'peakfinder' || 
+                            panelKey === 'streetview' || panelKey === 'mapillary')) {
             shouldEnable = false;
+          } else {
+            // For non-drawing tools or Geoman tools: only active panel gets events
+            shouldEnable = this.activePanel && panelKey === this.activePanel;
+            
+            // Special case: Geoman tools draw directly on map, so disable map-overlay
+            if (panelKey === 'map-overlay' && this.router && this.router.usesGeoman && this.router.usesGeoman(this.currentTool)) {
+              shouldEnable = false;
+            }
           }
         }
       }
@@ -1676,6 +1814,7 @@ class DrawingRouter {
     this.state = { ...DRAWING_DEFAULTS };
     this.undoStack = [];
     this.redoStack = [];
+    this.MAX_UNDO_STACK_SIZE = 100; // Limit stack size to prevent memory issues
     this.konvaManager = new KonvaManager(this);
     this.activePanel = 'map';
     this.geomanLayers = new Set();
@@ -1699,6 +1838,11 @@ class DrawingRouter {
     this.updateToolbarUI();
     this.konvaManager.updatePointerBehavior(this.state.tool);
     this.updateSunMeasurementUI();
+    
+    // Initialize image overlay sync if syncImageOverlay function exists
+    if (typeof syncImageOverlay === 'function') {
+      syncImageOverlay();
+    }
   }
 
   attachMapHandlers() {
@@ -1706,6 +1850,13 @@ class DrawingRouter {
 
     this.map.on('pm:create', (e) => {
       const layer = e.layer;
+      
+      // Ensure layer is added to map (Leaflet Geoman should do this automatically,
+      // but we ensure it explicitly for reliability)
+      if (!this.map.hasLayer(layer)) {
+        layer.addTo(this.map);
+      }
+      
       this.applyGeomanStyle(layer);
       this.geomanLayers.add(layer);
       if (window.drawingLayerRegistry && typeof window.drawingLayerRegistry.registerLeafletLayer === 'function') {
@@ -1745,6 +1896,10 @@ class DrawingRouter {
 
   recordCommand(command) {
     this.undoStack.push(command);
+    // Limit stack size to prevent unlimited memory growth
+    if (this.undoStack.length > this.MAX_UNDO_STACK_SIZE) {
+      this.undoStack.shift(); // Remove oldest command
+    }
     this.redoStack = [];
   }
 
@@ -1792,19 +1947,9 @@ class DrawingRouter {
     this.activePanel = panelKey;
     if (panelKey === 'map') {
       this.konvaManager.setActivePanel(null);
-      // Ensure map-overlay doesn't interfere with Geoman tools
-      const mapOverlayPanel = this.konvaManager.getPanel('map-overlay');
-      if (mapOverlayPanel && this.usesGeoman()) {
-        mapOverlayPanel.overlay.style.pointerEvents = 'none';
-      }
       this.enableGeomanForCurrentTool();
     } else {
       this.disableGeomanDraw();
-      // Re-enable map-overlay if switching away from Geoman
-      const mapOverlayPanel = this.konvaManager.getPanel('map-overlay');
-      if (mapOverlayPanel && panelKey === 'map-overlay') {
-        mapOverlayPanel.setPointerEnabled(true);
-      }
       if (panelKey) {
         this.konvaManager.setActivePanel(panelKey);
       }
@@ -1814,6 +1959,11 @@ class DrawingRouter {
 
   usesGeoman(tool = this.state.tool) {
     return ['rect', 'polygon', 'circle', 'line'].includes(tool);
+  }
+
+  isDrawingTool(tool = this.state.tool) {
+    // Returns true for ANY drawing tool (Geoman + Konva drawing tools)
+    return ['rect', 'polygon', 'circle', 'line', 'ellipse', 'arrow', 'freehand'].includes(tool);
   }
 
   setupKeyboardHandlers() {
@@ -1936,21 +2086,27 @@ class DrawingRouter {
   }
 
   selectTool(tool) {
+    const previousTool = this.state.tool;
     this.state.tool = tool;
+    
+    // CRITICAL: Update KonvaManager's currentTool FIRST before any state changes
+    // This ensures applyPointerState has the correct tool information
+    this.konvaManager.currentTool = tool;
+    
+    // Critical: Cancel any active forwarding first
     this.konvaManager.cancelForwarding();
     
-    // For continuous drawing tools like freehand, ensure panels are ready
-    if (tool === 'freehand') {
-      // Force pointer events to be enabled immediately for all active panels
-      this.konvaManager.panels.forEach((panel, key) => {
-        if (key === this.activePanel || (this.activePanel === 'map' && key === 'map-overlay')) {
-          panel.overlay.style.pointerEvents = 'auto';
+    // Reset panel drawing states
+    if (this.konvaManager && this.konvaManager.panels) {
+      this.konvaManager.panels.forEach(panel => {
+        if (panel.drawingShape) {
+          panel.drawingShape = null;
+        }
+        if (panel.pendingPolygon) {
+          panel.pendingPolygon = null;
         }
       });
     }
-    
-    // Update pointer behavior immediately to prevent missed first clicks
-    this.konvaManager.updatePointerBehavior(tool);
     
     if (tool !== 'pan') {
       this.konvaManager.clearSelections();
@@ -1962,6 +2118,7 @@ class DrawingRouter {
         }
       }
     }
+    
     if (this.activePanel === 'map' || this.activePanel === 'map-overlay') {
       const desiredPanel = this.desiredMapPanel(tool);
       if (desiredPanel !== this.activePanel) {
@@ -1970,7 +2127,11 @@ class DrawingRouter {
         this.enableGeomanForCurrentTool();
       }
     }
+    
     this.updateToolbarUI();
+    
+    // Ensure pointer behavior is applied with current tool state
+    this.konvaManager.applyPointerState();
   }
 
   selectColor(color) {
@@ -2605,6 +2766,10 @@ class DrawingRouter {
       command.redo();
     }
     this.undoStack.push(command);
+    // Limit stack size to prevent unlimited memory growth
+    if (this.undoStack.length > this.MAX_UNDO_STACK_SIZE) {
+      this.undoStack.shift(); // Remove oldest command
+    }
   }
 
   clearAllShapes() {

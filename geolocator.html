@@ -132,7 +132,7 @@
             <span>🔍 Geolocator</span>
             <div style="display:flex;gap:4px">
               <button class="help-btn" onclick="showHelp()" title="Show help">?</button>
-              <button class="collapse-btn" onclick="toggleSidebar()" title="Collapse panel">◀</button>
+              <button class="collapse-btn" onclick="toggleSidebar()" title="Minimize panel">🗕 ◀</button>
             </div>
           </h2>
           
@@ -688,6 +688,17 @@
           <li><strong>Double-click:</strong> Complete polygon drawing</li>
         </ul>
       </div>
+
+      <div class="help-section" style="background:#f8f9fa;border-radius:8px;padding:1rem;border-left:3px solid #9D2235">
+        <h3>🐛 Bug Reports & Feedback</h3>
+        <p>Found a bug or have a suggestion? Please report it on our GitHub page:</p>
+        <p style="margin-top:0.5rem">
+          <a href="https://github.com/kolenyo2099/geolocator" target="_blank" rel="noopener" 
+             style="color:#9D2235;font-weight:600;text-decoration:none">
+            github.com/kolenyo2099/geolocator ↗
+          </a>
+        </p>
+      </div>
     </div>
   </div>
 
@@ -703,5 +714,21 @@
   <script src="assets/js/line-of-sight.js"></script>
   <script src="assets/js/mapillary-auth.js"></script>
   <script src="assets/js/street-view.js"></script>
+
+  <!-- Firefox Browser Check -->
+  <script>
+    (function() {
+      // Detect Firefox browser
+      const isFirefox = typeof InstallTrigger !== 'undefined' || 
+                       navigator.userAgent.toLowerCase().indexOf('firefox') > -1;
+      
+      if (isFirefox) {
+        // Show alert after page loads
+        window.addEventListener('load', function() {
+          alert('⚠️ Firefox Browser Detected\n\nPlease note that some features may not be available or may work differently in Firefox. For the best experience, we recommend using Chrome, Edge, or Safari.');
+        });
+      }
+    })();
+  </script>
 </body>
 </html>

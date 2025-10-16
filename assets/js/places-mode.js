@@ -35,9 +35,6 @@ const allOsmCategories = [...new Set(Object.values(osmCategories).flat())];
 let activeFilters = new Set(allOsmCategories);
 let allPlaces = [];
 
-// AbortController for canceling in-flight requests
-let overpassAbortController = null;
-
 // Track drawn markers per summary category (e.g., "amenity: cafe")
 let markersByCategory = new Map();
 // Categories toggled off from the Discovery Summary
@@ -45,6 +42,10 @@ let hiddenSummaryCategories = new Set();
 
 function initFilters() {
   const grid = document.getElementById('filterGrid');
+  if (!grid) {
+    console.error('Filter grid element not found');
+    return;
+  }
   grid.innerHTML = '';
   
   const processedCategories = new Set();
@@ -53,7 +54,7 @@ function initFilters() {
     const categoryDiv = document.createElement('div');
     categoryDiv.className = 'filter-category';
     
-    // Filter out categories that have already been processed
+    // Filter out categories that have already been processed to avoid duplicates
     const uniqueCategories = categories.filter(cat => {
       if (processedCategories.has(cat)) {
         return false;
@@ -225,9 +226,6 @@ let groundDetachedView = '2d';
 let groundControlsWereVisible = false;
 let drawDetachedView = '2d';
 
-// Track timeouts for cleanup
-let viewToggleTimeouts = [];
-
 function syncDrawingPanel() {
   if (typeof drawingRouter === 'undefined') return;
   if (drawingRouter && drawingRouter.konvaManager && typeof drawingRouter.konvaManager.cancelForwarding === 'function') {
@@ -250,12 +248,6 @@ function syncDrawingPanel() {
 }
 
 function detachPlacesMode() {
-  // Cancel any in-flight requests
-  if (overpassAbortController) {
-    overpassAbortController.abort();
-    overpassAbortController = null;
-  }
-
   placesClusterAttached = map.hasLayer(cluster);
   if (placesClusterAttached) {
     map.removeLayer(cluster);
@@ -292,10 +284,8 @@ function restorePlacesMode() {
 
 function detachGroundMode() {
   const controls = document.getElementById('streetViewControls');
-  if (controls) {
-    groundControlsWereVisible = controls.classList.contains('visible');
-    controls.classList.remove('visible');
-  }
+  groundControlsWereVisible = controls.classList.contains('visible');
+  controls.classList.remove('visible');
 
   if (streetViewMarker && streetViewMarker.marker && map.hasLayer(streetViewMarker.marker)) {
     map.removeLayer(streetViewMarker.marker);
@@ -307,9 +297,7 @@ function detachGroundMode() {
   groundDetachedView = currentView;
   if ((currentView === 'streetview' || currentView === 'mapillary') && typeof backToMap === 'function') {
     backToMap();
-    if (controls) {
-      controls.classList.remove('visible');
-    }
+    controls.classList.remove('visible');
   }
 }
 
@@ -318,14 +306,9 @@ function restoreGroundMode() {
 
   if (streetViewMarker && streetViewMarker.marker && streetViewMarker.visible) {
     streetViewMarker.marker.addTo(map);
-    if (controls) {
-      controls.classList.add('visible');
-    }
-    const statusEl = document.getElementById('status');
-    if (statusEl) {
-      statusEl.textContent = 'Location selected - Choose a view option';
-    }
-  } else if (controls) {
+    controls.classList.add('visible');
+    document.getElementById('status').textContent = 'Location selected - Choose a view option';
+  } else {
     controls.classList.toggle('visible', groundControlsWereVisible);
   }
 
@@ -427,22 +410,17 @@ function setMapMode(mode) {
     }
   } else if (mode === 'ground') {
     document.getElementById('status').textContent = 'Click map for ground view';
-  } else   if (mode === 'draw') {
+  } else if (mode === 'draw') {
     document.getElementById('status').textContent = 'Drawing mode active!';
 
     if (currentView === '2d') {
-      // Disable map dragging to prevent interference with drawing tools
-      if (map.dragging._enabled) {
-        map.dragging.disable();
-      }
+      map.dragging.disable();
     } else if (currentView === '3d') {
       view3DCanvas.classList.add('active');
       setup3DViewCanvas();
     } else {
       if (typeof backToMap === 'function') backToMap();
-      if (map.dragging._enabled) {
-        map.dragging.disable();
-      }
+      map.dragging.disable();
     }
   } else if (mode === 'los') {
     document.getElementById('status').textContent = 'Click point A (observer)';
@@ -464,10 +442,6 @@ function setMapMode(mode) {
 }
 
 function toggleMapView() {
-  // Clear any pending timeouts
-  viewToggleTimeouts.forEach(id => clearTimeout(id));
-  viewToggleTimeouts = [];
-  
   const map2D = document.getElementById('map');
   const mapCanvas2D = document.getElementById('mapCanvas');
   const view3D = document.getElementById('view3DContainer');
@@ -479,89 +453,78 @@ function toggleMapView() {
   if (currentView === '2d') {
     if (losMode === 'peakfinder') {
       currentView = 'peakfinder';
-      if (peakFinder) peakFinder.classList.add('active');
+      peakFinder.classList.add('active');
     } else {
       currentView = '3d';
-      if (view3D) view3D.classList.add('active');
-      if (mapMode === 'draw' && view3DCanvasEl) {
+      view3D.classList.add('active');
+      if (mapMode === 'draw') {
         view3DCanvasEl.classList.add('active');
-        if (typeof setup3DViewCanvas === 'function') {
-          setup3DViewCanvas();
-        }
+        setup3DViewCanvas();
       }
     }
     
-    if (map2D) map2D.style.display = 'none';
-    if (mapCanvas2D) mapCanvas2D.style.display = 'none';
-    if (map && map.dragging) map.dragging.enable();
+    map2D.style.display = 'none';
+    mapCanvas2D.style.display = 'none';
+    map.dragging.enable();
     
-    if (toggleBtn) toggleBtn.style.display = 'flex';
-    if (infoBar) infoBar.classList.add('visible');
+    toggleBtn.style.display = 'flex';
+    infoBar.classList.add('visible');
     
-    const toggleIcon = document.getElementById('viewToggleIcon');
-    const toggleText = document.getElementById('viewToggleText');
-    if (toggleIcon) toggleIcon.textContent = '🗺️';
-    if (toggleText) toggleText.textContent = 'Back to 2D Map';
+    document.getElementById('viewToggleIcon').textContent = '🗺️';
+    document.getElementById('viewToggleText').textContent = 'Back to 2D Map';
     
     if (window.map3D && currentView === '3d') {
-      const timeoutId = setTimeout(() => {
+      setTimeout(() => {
         window.map3D.resize();
-        if (typeof setup3DViewCanvas === 'function') {
-          setup3DViewCanvas();
-        }
+        setup3DViewCanvas();
       }, 100);
-      viewToggleTimeouts.push(timeoutId);
     }
   } else {
     currentView = '2d';
-    if (map2D) map2D.style.display = 'block';
-    if (mapCanvas2D) mapCanvas2D.style.display = 'block';
-    if (view3D) view3D.classList.remove('active');
-    if (peakFinder) peakFinder.classList.remove('active');
-    if (view3DCanvasEl) view3DCanvasEl.classList.remove('active');
-    if (toggleBtn) toggleBtn.style.display = 'none';
-    if (infoBar) infoBar.classList.remove('visible');
+    map2D.style.display = 'block';
+    mapCanvas2D.style.display = 'block';
+    view3D.classList.remove('active');
+    peakFinder.classList.remove('active');
+    view3DCanvasEl.classList.remove('active');
+    toggleBtn.style.display = 'none';
+    infoBar.classList.remove('visible');
 
-    if (mapMode === 'draw' && map && map.dragging) {
+    if (mapMode === 'draw') {
       map.dragging.disable();
     }
 
-    const timeoutId = setTimeout(() => {
-      if (map && typeof map.invalidateSize === 'function') {
-        map.invalidateSize();
-      }
+    setTimeout(() => {
+      map.invalidateSize();
     }, 100);
-    viewToggleTimeouts.push(timeoutId);
   }
 
   syncDrawingPanel();
 }
 
-// Initialize cluster (will be added to map in init)
 const cluster = L.markerClusterGroup({
   chunkedLoading: true,
   spiderfyOnMaxZoom: true,
   showCoverageOnHover: false,
   zoomToBoundsOnClick: true
 });
+map.addLayer(cluster);
 
 let pin = null, circle = null;
-let rSlider, rLabel, status, summaryPanel;
-let mapClickHandler;
+const rSlider = document.getElementById('radiusSlider');
+const rLabel = document.getElementById('radiusLabel');
+const status = document.getElementById('status');
+const summaryPanel = document.getElementById('summaryPanel');
 
-function syncRadiusLabel() { 
-  if (rLabel && rSlider) {
-    rLabel.textContent = rSlider.value; 
-  }
-}
+function syncRadiusLabel() { rLabel.textContent = rSlider.value; }
+syncRadiusLabel();
 
-// Map click handler function (will be registered in init)
-mapClickHandler = (e => {
-  // Ignore clicks when in drawing-related modes to prevent interference with drawing tools
-  if (mapMode === 'draw' || mapMode === 'angles') {
-    return;
-  }
-  
+rSlider.addEventListener('input', () => {
+  syncRadiusLabel();
+  if (circle) circle.setRadius(+rSlider.value);
+  if (pin) queryOverpass();
+});
+
+map.on('click', e => {
   if (mapMode === 'places') {
     cluster.clearLayers();
     if (pin) map.removeLayer(pin);
@@ -580,10 +543,7 @@ mapClickHandler = (e => {
 
     queryOverpass();
     
-    const streetViewControls = document.getElementById('streetViewControls');
-    if (streetViewControls) {
-      streetViewControls.classList.remove('visible');
-    }
+    document.getElementById('streetViewControls').classList.remove('visible');
   } else if (mapMode === 'ground') {
     if (streetViewMarker && streetViewMarker.marker) {
       map.removeLayer(streetViewMarker.marker);
@@ -602,13 +562,8 @@ mapClickHandler = (e => {
     };
     
     const controls = document.getElementById('streetViewControls');
-    if (controls) {
-      controls.classList.add('visible');
-    }
-    const statusEl = document.getElementById('status');
-    if (statusEl) {
-      statusEl.textContent = 'Location selected - Choose a view option';
-    }
+    controls.classList.add('visible');
+    document.getElementById('status').textContent = 'Location selected - Choose a view option';
   } else if (mapMode === 'los') {
     handleLOSClick(e.latlng);
   }
@@ -628,55 +583,43 @@ function buildQuery(lat, lon, r) {
 }
 
 async function queryOverpass() {
-  // Cancel any previous request
-  if (overpassAbortController) {
-    overpassAbortController.abort();
-  }
-  
-  // Create new AbortController for this request
-  overpassAbortController = new AbortController();
-  
   const {lat, lng} = pin.getLatLng();
   const radius = rSlider.value;
-  
-  if (status) {
-    status.textContent = 'Querying OpenStreetMap...';
-  }
-  if (summaryPanel) {
-    summaryPanel.classList.remove('visible');
-  }
+  status.textContent = 'Querying OpenStreetMap...';
+  summaryPanel.classList.remove('visible');
 
   try {
     const res = await fetch('https://overpass-api.de/api/interpreter', {
       method: 'POST',
       body: buildQuery(lat.toFixed(6), lng.toFixed(6), radius),
       headers: {'Content-Type': 'text/plain'},
-      signal: overpassAbortController.signal
+      signal: AbortSignal.timeout(30000) // 30 second timeout
     });
     
-    if (!res.ok) throw new Error('Network error');
+    if (!res.ok) {
+      const errorText = await res.text().catch(() => 'No error details');
+      throw new Error(`Overpass API error (${res.status}): ${errorText.substring(0, 200)}`);
+    }
     
     const data = await res.json();
+    
+    if (!data || !Array.isArray(data.elements)) {
+      throw new Error('Invalid response format from Overpass API');
+    }
+    
     allPlaces = data.elements;
     
-    if (status) {
-      status.textContent = `Found ${allPlaces.length} places`;
-    }
+    status.textContent = `Found ${allPlaces.length} places`;
     filterAndDrawPlaces();
     
   } catch (err) {
-    // Don't show error if request was aborted
+    console.error('Error querying Overpass API:', err);
     if (err.name === 'AbortError') {
-      console.log('Request cancelled');
-      return;
-    }
-    console.error(err);
-    if (status) {
-      status.textContent = 'Failed to load data';
+      status.textContent = 'Request timed out - try a smaller search radius';
+    } else {
+      status.textContent = `Failed to load data: ${err.message}`;
     }
     allPlaces = [];
-  } finally {
-    overpassAbortController = null;
   }
 }
 
@@ -882,38 +825,3 @@ function centerMapOnPlace(lat, lon, name) {
     });
   }
 }
-
-// Initialize when DOM is ready
-document.addEventListener('DOMContentLoaded', () => {
-  // Get DOM element references
-  rSlider = document.getElementById('radiusSlider');
-  rLabel = document.getElementById('radiusLabel');
-  status = document.getElementById('status');
-  summaryPanel = document.getElementById('summaryPanel');
-  
-  // Initialize cluster on map
-  if (map && typeof map.addLayer === 'function') {
-    map.addLayer(cluster);
-  }
-  
-  // Initialize radius label
-  syncRadiusLabel();
-  
-  // Add event listeners
-  if (rSlider) {
-    rSlider.addEventListener('input', () => {
-      syncRadiusLabel();
-      if (circle && typeof circle.setRadius === 'function') {
-        circle.setRadius(+rSlider.value);
-      }
-      if (pin) queryOverpass();
-    });
-  }
-  
-  if (map && typeof map.on === 'function') {
-    map.on('click', mapClickHandler);
-  }
-  
-  // Initialize filters UI
-  initFilters();
-});

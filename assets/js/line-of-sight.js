@@ -279,11 +279,23 @@ function clearLineOfSight() {
   }
   
   if (window.map3D) {
-    window.map3D.remove();
+    try {
+      window.map3D.remove();
+    } catch (e) {
+      console.warn('Error removing map3D:', e);
+    }
     window.map3D = null;
   }
 
   if (peakFinderPanel) {
+    try {
+      // Clean up PeakFinder resources if available
+      if (typeof peakFinderPanel.destroy === 'function') {
+        peakFinderPanel.destroy();
+      }
+    } catch (e) {
+      console.warn('Error destroying PeakFinder panel:', e);
+    }
     peakFinderPanel = null;
   }
   

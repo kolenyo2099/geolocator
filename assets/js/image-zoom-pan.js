@@ -6,14 +6,15 @@ let isPanning = false;
 let panStartX = 0;
 let panStartY = 0;
 
-let imageContainer;
+const imageContainer = document.querySelector('.image-canvas-container');
 
+// Use centralized tool accessor from image-layers.js
 function getActiveTool() {
-  return (window.drawingRouter && drawingRouter.state && drawingRouter.state.tool) || 'pan';
+  return window.getCurrentTool ? window.getCurrentTool() : 
+    ((window.drawingRouter && drawingRouter.state && drawingRouter.state.tool) || 'pan');
 }
 
-// Event handlers (will be registered in init)
-const wheelHandler = ((e) => {
+imageContainer.addEventListener('wheel', (e) => {
   if (imageLayers.length === 0) return;
   
   e.preventDefault();
@@ -30,58 +31,52 @@ const wheelHandler = ((e) => {
   
   imageZoom = newZoom;
   updateImageTransform();
-});
+}, { passive: false });
 
-const mouseDownHandler = ((e) => {
+imageContainer.addEventListener('mousedown', (e) => {
+  const tool = getActiveTool();
   const leftClick = e.button === 0;
   const midClick = e.button === 1;
-  const tool = getActiveTool();
   
-  // Don't start panning if using a drawing tool (let Konva handle it)
-  if (tool !== 'pan' && tool !== 'note' && leftClick) {
-    return;
-  }
+  // Check if we're using a drawing tool
+  const isDrawingTool = window.drawingRouter && typeof window.drawingRouter.isDrawingTool === 'function' 
+    ? window.drawingRouter.isDrawingTool(tool) 
+    : false;
   
-  if ((midClick || (leftClick && tool === 'pan')) && !isDraggingLayer && !isResizingLayer) {
+  // Only pan if: middle click OR (left click AND pan tool AND not drawing tool AND not dragging/resizing)
+  if ((midClick || (leftClick && tool === 'pan' && !isDrawingTool)) && !isDraggingLayer && !isResizingLayer) {
     e.preventDefault();
     isPanning = true;
     panStartX = e.clientX - imagePanX;
     panStartY = e.clientY - imagePanY;
-    if (imageContainer) {
-      imageContainer.classList.add('panning');
-    }
+    imageContainer.classList.add('panning');
   }
 });
 
-const mouseMoveHandler = ((e) => {
+imageContainer.addEventListener('mousemove', (e) => {
   if (isPanning) {
     e.preventDefault();
-    e.stopPropagation();
     imagePanX = e.clientX - panStartX;
     imagePanY = e.clientY - panStartY;
     updateImageTransform();
   }
 });
 
-const mouseUpHandler = ((e) => {
+imageContainer.addEventListener('mouseup', (e) => {
   if (isPanning) {
     isPanning = false;
-    if (imageContainer) {
-      imageContainer.classList.remove('panning');
-    }
+    imageContainer.classList.remove('panning');
   }
 });
 
-const mouseLeaveHandler = (() => {
+imageContainer.addEventListener('mouseleave', () => {
   if (isPanning) {
     isPanning = false;
-    if (imageContainer) {
-      imageContainer.classList.remove('panning');
-    }
+    imageContainer.classList.remove('panning');
   }
 });
 
-const dblClickHandler = ((e) => {
+imageContainer.addEventListener('dblclick', (e) => {
   if (e.target === imageContainer) {
     imageZoom = 1;
     imagePanX = 0;
@@ -115,19 +110,4 @@ function syncImageOverlay() {
   });
 }
 
-// Initialize when DOM is ready
-document.addEventListener('DOMContentLoaded', () => {
-  imageContainer = document.querySelector('.image-canvas-container');
-  
-  if (imageContainer) {
-    // Register event listeners
-    imageContainer.addEventListener('wheel', wheelHandler, { passive: false });
-    imageContainer.addEventListener('mousedown', mouseDownHandler);
-    imageContainer.addEventListener('mousemove', mouseMoveHandler);
-    imageContainer.addEventListener('mouseup', mouseUpHandler);
-    imageContainer.addEventListener('mouseleave', mouseLeaveHandler);
-    imageContainer.addEventListener('dblclick', dblClickHandler);
-  }
-  
-  syncImageOverlay();
-});
+// Sync will be called after drawingRouter is initialized and when images are loaded/transformed

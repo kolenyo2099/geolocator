@@ -4,9 +4,6 @@ let anglesAOIWasVisible = false;
 let anglesAllRoadsWasVisible = true;
 let anglesSegmentsWasVisible = true;
 let anglesIntersectionsWasVisible = true;
-
-// AbortController for canceling in-flight requests
-let anglesAbortController = null;
 const anglesAllRoadsLayer = L.geoJSON(null, {
   style: { weight: 1, opacity: 0.5, color: '#888' }
 }).addTo(map);
@@ -42,12 +39,6 @@ function clearAnglesLayers() {
 }
 
 function detachAnglesMode() {
-  // Cancel any in-flight requests
-  if (anglesAbortController) {
-    anglesAbortController.abort();
-    anglesAbortController = null;
-  }
-
   anglesAllRoadsWasVisible = map.hasLayer(anglesAllRoadsLayer);
   anglesSegmentsWasVisible = map.hasLayer(anglesSegmentsLayer);
   anglesIntersectionsWasVisible = map.hasLayer(anglesIntersectionsLayer);
@@ -89,43 +80,32 @@ function restoreAnglesMode() {
   anglesAOIWasVisible = false;
 }
 
-// Event handlers (will be registered in init)
-const pmCreateHandler = (e => {
+// Listen for polygon creation
+map.on('pm:create', e => {
   if (mapMode === 'angles') {
     if (anglesAOILayer) map.removeLayer(anglesAOILayer);
     anglesAOILayer = e.layer.addTo(map);
-    const statusEl = document.getElementById('status');
-    if (statusEl) {
-      statusEl.textContent = 'Area selected - adjust settings and click Fetch';
-    }
+    document.getElementById('status').textContent = 'Area selected - adjust settings and click Fetch';
   }
 });
 
-const pmRemoveHandler = (e => {
-  // FIX: Check if we're in angles mode to prevent clearing angles data in other modes
-  if (mapMode === 'angles' && e.layer === anglesAOILayer) {
+map.on('pm:remove', e => {
+  if (e.layer === anglesAOILayer) {
     anglesAOILayer = null;
     clearAnglesLayers();
   }
 });
 
 function updateAngleMode() {
-  const modeEl = document.querySelector('input[name="angleMode"]:checked');
-  const maxAllowed = modeEl && modeEl.value === '180' ? 180 : 90;
+  const maxAllowed = document.querySelector('input[name="angleMode"]:checked').value === '180' ? 180 : 90;
   const rangeHint = document.getElementById('rangeHint');
   const minAngle = document.getElementById('minAngle');
   const maxAngle = document.getElementById('maxAngle');
   
-  if (rangeHint) {
-    rangeHint.textContent = `Allowed: 0—${maxAllowed}°`;
-  }
+  rangeHint.textContent = `Allowed: 0—${maxAllowed}°`;
   
-  if (minAngle && +minAngle.value > maxAllowed) {
-    minAngle.value = maxAllowed;
-  }
-  if (maxAngle && +maxAngle.value > maxAllowed) {
-    maxAngle.value = maxAllowed;
-  }
+  if (+minAngle.value > maxAllowed) minAngle.value = maxAllowed;
+  if (+maxAngle.value > maxAllowed) maxAngle.value = maxAllowed;
 }
 
 function buildAnglesOverpassQL(polygonLatLngs, includedHighways) {
@@ -139,22 +119,41 @@ out geom;
 `;
 }
 
-async function fetchOSMRoads(ql, signal) {
-  const resp = await fetch('https://overpass-api.de/api/interpreter', {
-    method: 'POST', 
-    body: new URLSearchParams({ data: ql }),
-    signal: signal
-  });
-  if (!resp.ok) throw new Error(`Overpass HTTP ${resp.status}`);
-  const data = await resp.json();
-  const features = (data.elements || [])
-    .filter(el => el.type === 'way' && Array.isArray(el.geometry))
-    .map(el => ({
-      type: 'Feature',
-      properties: { id: el.id, tags: el.tags || {} },
-      geometry: { type: 'LineString', coordinates: el.geometry.map(g => [g.lon, g.lat]) }
-    }));
-  return { type: 'FeatureCollection', features };
+async function fetchOSMRoads(ql) {
+  try {
+    const resp = await fetch('https://overpass-api.de/api/interpreter', {
+      method: 'POST', 
+      body: new URLSearchParams({ data: ql }),
+      signal: AbortSignal.timeout(30000) // 30 second timeout
+    });
+    
+    if (!resp.ok) {
+      const errorText = await resp.text().catch(() => 'No error details available');
+      throw new Error(`Overpass API error (${resp.status}): ${errorText.substring(0, 200)}`);
+    }
+    
+    const data = await resp.json();
+    
+    if (!data || !Array.isArray(data.elements)) {
+      throw new Error('Invalid response format from Overpass API');
+    }
+    
+    const features = (data.elements || [])
+      .filter(el => el.type === 'way' && Array.isArray(el.geometry))
+      .map(el => ({
+        type: 'Feature',
+        properties: { id: el.id, tags: el.tags || {} },
+        geometry: { type: 'LineString', coordinates: el.geometry.map(g => [g.lon, g.lat]) }
+      }));
+    
+    return { type: 'FeatureCollection', features };
+  } catch (error) {
+    console.error('Error fetching OSM roads:', error);
+    if (error.name === 'AbortError') {
+      throw new Error('Request timed out. The area might be too large or the server is slow. Try a smaller polygon.');
+    }
+    throw new Error(`Failed to fetch road data: ${error.message}`);
+  }
 }
 
 function angleBetween(b1, b2, modeMax) {
@@ -229,7 +228,16 @@ function computeMatchesAsPointsAndSegments(fcLines, minDeg, maxDeg, modeMax) {
 }
 
 function extractLeafletRing(layer) {
+  if (!layer || typeof layer.getLatLngs !== 'function') {
+    console.error('Invalid layer provided to extractLeafletRing');
+    return [];
+  }
+  
   const latlngs = layer.getLatLngs();
+  if (!latlngs || latlngs.length === 0) {
+    return [];
+  }
+  
   const ring = Array.isArray(latlngs[0]) ? latlngs[0] : latlngs;
   const closed = ring.slice();
   if (closed.length && (closed[0].lat !== closed[closed.length - 1].lat || closed[0].lng !== closed[closed.length - 1].lng)) {
@@ -239,42 +247,36 @@ function extractLeafletRing(layer) {
 }
 
 async function fetchAnglesData() {
-  // Cancel any previous request
-  if (anglesAbortController) {
-    anglesAbortController.abort();
-  }
-  
-  // Create new AbortController for this request
-  anglesAbortController = new AbortController();
-  
   try {
     if (!anglesAOILayer || !anglesAOILayer.getLatLngs) {
       alert('Please draw a polygon area first using the drawing tools (top-right)');
-      const statusEl = document.getElementById('status');
-      if (statusEl) {
-        statusEl.textContent = 'Draw a polygon to start';
-      }
+      document.getElementById('status').textContent = 'Draw a polygon to start';
       return;
     }
 
-    const modeEl = document.querySelector('input[name="angleMode"]:checked');
-    const maxAllowed = modeEl && modeEl.value === '180' ? 180 : 90;
-    const minAngleEl = document.getElementById('minAngle');
-    const maxAngleEl = document.getElementById('maxAngle');
-    const minA = minAngleEl ? Number(minAngleEl.value) : 0;
-    const maxA = maxAngleEl ? Number(maxAngleEl.value) : maxAllowed;
+    const maxAllowed = document.querySelector('input[name="angleMode"]:checked').value === '180' ? 180 : 90;
+    const minA = Number(document.getElementById('minAngle').value);
+    const maxA = Number(document.getElementById('maxAngle').value);
     
-    if ([minA, maxA].some(isNaN) || minA < 0 || maxA > maxAllowed || minA > maxA) {
-      alert(`Angle range must be between 0 and ${maxAllowed}°`);
+    // Enhanced validation for angle ranges
+    if (!Number.isFinite(minA) || !Number.isFinite(maxA) || isNaN(minA) || isNaN(maxA)) {
+      alert('Please enter valid numeric values for angle range.');
+      return;
+    }
+    
+    if (minA < 0 || maxA > maxAllowed || minA > maxA) {
+      alert(`Invalid angle range. Min must be ≥ 0, Max must be ≤ ${maxAllowed}°, and Min must be ≤ Max.`);
+      return;
+    }
+    
+    if (minA === maxA) {
+      alert('Min and Max angles cannot be the same. Please provide a valid range.');
       return;
     }
 
     const hwys = Array.from(document.querySelectorAll('.hwy:checked')).map(cb => cb.value);
     
-    const statusEl = document.getElementById('status');
-    if (statusEl) {
-      statusEl.textContent = 'Fetching OSM roads from Overpass...';
-    }
+    document.getElementById('status').textContent = 'Fetching OSM roads from Overpass...';
     
     // Don't clear the AOI layer, only the results
     anglesAllRoadsLayer.clearLayers();
@@ -282,17 +284,20 @@ async function fetchAnglesData() {
     anglesIntersectionsLayer.clearLayers();
 
     const ring = extractLeafletRing(anglesAOILayer);
+    if (!ring || ring.length < 3) {
+      alert('Invalid polygon area. Please draw a valid polygon with at least 3 points.');
+      document.getElementById('status').textContent = 'Invalid polygon area';
+      return;
+    }
+    
     const ql = buildAnglesOverpassQL(ring, hwys);
-    const fc = await fetchOSMRoads(ql, anglesAbortController.signal);
+    const fc = await fetchOSMRoads(ql);
 
-    const showAllRoadsEl = document.getElementById('showAllRoads');
-    if (showAllRoadsEl && showAllRoadsEl.checked) {
+    if (document.getElementById('showAllRoads').checked) {
       anglesAllRoadsLayer.addData(fc);
     }
 
-    if (statusEl) {
-      statusEl.textContent = `Fetched ${fc.features.length} ways. Computing...`;
-    }
+    document.getElementById('status').textContent = `Fetched ${fc.features.length} ways. Computing...`;
     
     const modeMax = maxAllowed;
     const result = computeMatchesAsPointsAndSegments(fc, minA, maxA, modeMax);
@@ -302,28 +307,16 @@ async function fetchAnglesData() {
 
     const nPts = result.points.features.length;
     const nSegs = result.segments.features.length;
-    if (statusEl) {
-      statusEl.textContent = `Found ${nPts} intersections and ${nSegs} segments in ${minA}—${maxA}° range`;
-    }
+    document.getElementById('status').textContent = `Found ${nPts} intersections and ${nSegs} segments in ${minA}—${maxA}° range`;
     
     if (nPts || nSegs) {
       const group = L.featureGroup([anglesSegmentsLayer, anglesIntersectionsLayer]);
       map.fitBounds(group.getBounds(), { maxZoom: 18 });
     }
   } catch (err) {
-    // Don't show error if request was aborted
-    if (err.name === 'AbortError') {
-      console.log('Request cancelled');
-      return;
-    }
     console.error(err);
-    const statusEl = document.getElementById('status');
-    if (statusEl) {
-      statusEl.textContent = 'Error: ' + err.message;
-    }
+    document.getElementById('status').textContent = 'Error: ' + err.message;
     alert('Overpass error. Try a smaller area or fewer highway types.');
-  } finally {
-    anglesAbortController = null;
   }
 }
 
@@ -352,12 +345,3 @@ function downloadSegments() {
   a.download = 'segments.geojson';
   a.click();
 }
-
-// Initialize when DOM is ready
-document.addEventListener('DOMContentLoaded', () => {
-  // Register event listeners
-  if (map && typeof map.on === 'function') {
-    map.on('pm:create', pmCreateHandler);
-    map.on('pm:remove', pmRemoveHandler);
-  }
-});

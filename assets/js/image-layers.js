@@ -378,9 +378,13 @@ const imageViewer = document.getElementById('imageViewer');
 const imageCanvas = document.getElementById('imageCanvas');
 const ctx = imageCanvas.getContext('2d');
 
+// Centralized tool state accessor - ensures consistency across all modules
 function getCurrentTool() {
   return (window.drawingRouter && drawingRouter.state && drawingRouter.state.tool) || 'pan';
 }
+
+// Make globally accessible to prevent duplicate implementations
+window.getCurrentTool = getCurrentTool;
 
 function getCanvasCoords(event, canvas) {
   const rect = canvas.getBoundingClientRect();
@@ -467,6 +471,11 @@ function initializeCanvas() {
   imageCanvas.height = container.clientHeight;
   imageCanvas.style.width = container.clientWidth + 'px';
   imageCanvas.style.height = container.clientHeight + 'px';
+  
+  // Sync the Konva overlay after canvas resize
+  if (typeof syncImageOverlay === 'function') {
+    syncImageOverlay();
+  }
 }
 
 window.addEventListener('resize', () => {
@@ -894,16 +903,12 @@ function redrawAllLayers() {
   ctx.setTransform(imageZoom, 0, 0, imageZoom, imagePanX, imagePanY);
   
   imageLayers.forEach(layer => {
-    // Skip invisible layers or images that haven't loaded yet
-    if (!layer.visible || !layer.image || !layer.image.complete || layer.image.naturalWidth === 0) {
-      return;
-    }
-    
-    ctx.save();
-    
-    // Apply rotation around the center of the image
-    const w = layer.image.width * layer.scale;
-    const h = layer.image.height * layer.scale;
+    if (layer.visible) {
+      ctx.save();
+      
+      // Apply rotation around the center of the image
+      const w = layer.image.width * layer.scale;
+      const h = layer.image.height * layer.scale;
       const centerX = layer.x + w / 2;
       const centerY = layer.y + h / 2;
       
@@ -963,6 +968,11 @@ function redrawAllLayers() {
   });
   
   ctx.setTransform(1, 0, 0, 1, 0, 0);
+  
+  // Sync the Konva overlay to match image transform (AFTER canvas is drawn)
+  if (typeof syncImageOverlay === 'function') {
+    syncImageOverlay();
+  }
 }
 
 function getResizeHandle(x, y, layer) {
@@ -1005,7 +1015,6 @@ imageCanvas.addEventListener('mousedown', (e) => {
   const tool = getCurrentTool();
 
   if (tool === 'note') {
-    e.stopPropagation();
     const rect = imageCanvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
@@ -1013,16 +1022,25 @@ imageCanvas.addEventListener('mousedown', (e) => {
     return;
   }
 
+  // For drawing tools other than pan and note, let the Konva overlay handle it
+  // This prevents conflicts between canvas handlers and Konva drawing handlers
+  const isDrawingTool = window.drawingRouter && typeof window.drawingRouter.isDrawingTool === 'function' 
+    ? window.drawingRouter.isDrawingTool(tool) 
+    : false;
+  
+  if (isDrawingTool && tool !== 'pan') {
+    // Let the event propagate to the Konva overlay for drawing tools
+    return;
+  }
+
   if (tool === 'pan') {
     const coords = getCanvasCoords(e, imageCanvas);
     
-    // Check if clicking on a resize handle first
     if (selectedLayerId) {
       const selectedLayer = imageLayers.find(l => l.id === selectedLayerId);
       if (selectedLayer && selectedLayer.visible) {
         const handle = getResizeHandle(coords.x, coords.y, selectedLayer);
         if (handle) {
-          e.stopPropagation();
           isResizingLayer = true;
           resizeHandle = handle;
           resizeStartX = coords.x;
@@ -1035,7 +1053,6 @@ imageCanvas.addEventListener('mousedown', (e) => {
       }
     }
     
-    // Check if clicking on an image layer
     for (let i = imageLayers.length - 1; i >= 0; i--) {
       const layer = imageLayers[i];
       if (!layer.visible) continue;
@@ -1045,7 +1062,6 @@ imageCanvas.addEventListener('mousedown', (e) => {
       
       if (coords.x >= layer.x && coords.x <= right &&
           coords.y >= layer.y && coords.y <= bottom) {
-        e.stopPropagation();
         isDraggingLayer = true;
         selectedLayerId = layer.id;
         dragOffsetX = coords.x - layer.x;
@@ -1056,12 +1072,20 @@ imageCanvas.addEventListener('mousedown', (e) => {
     }
   }
   
-  // If we reach here with a drawing tool (not pan), let the event bubble to Konva
-  // Don't call stopPropagation() so Konva can handle it
 });
 
 imageCanvas.addEventListener('mousemove', (e) => {
   const tool = getCurrentTool();
+  
+  // Let drawing tools handle their own mouse movement
+  const isDrawingTool = window.drawingRouter && typeof window.drawingRouter.isDrawingTool === 'function' 
+    ? window.drawingRouter.isDrawingTool(tool) 
+    : false;
+  
+  if (isDrawingTool && tool !== 'pan') {
+    return;
+  }
+  
   const coords = getCanvasCoords(e, imageCanvas);
 
   if (tool === 'pan' && selectedLayerId && !isDraggingLayer && !isResizingLayer) {
@@ -1119,6 +1143,12 @@ imageCanvas.addEventListener('mousemove', (e) => {
 
 imageCanvas.addEventListener('mouseup', (e) => {
   const tool = getCurrentTool();
+  
+  // Let drawing tools handle their own mouseup
+  const isDrawingTool = window.drawingRouter && typeof window.drawingRouter.isDrawingTool === 'function' 
+    ? window.drawingRouter.isDrawingTool(tool) 
+    : false;
+  
   if (isDraggingLayer) {
     isDraggingLayer = false;
   } else if (isResizingLayer) {
@@ -1128,5 +1158,7 @@ imageCanvas.addEventListener('mouseup', (e) => {
 
   if (tool === 'pan') {
     imageCanvas.style.cursor = 'grab';
+  } else if (isDrawingTool) {
+    imageCanvas.style.cursor = 'crosshair';
   }
 });

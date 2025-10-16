@@ -16,10 +16,16 @@
   let menuOpen = false;
 
   function clampGridSize(value) {
-    if (Number.isNaN(value) || !Number.isFinite(value)) {
+    const MAX_GRID_KM = 100;
+    if (Number.isNaN(value) || !Number.isFinite(value) || value <= 0) {
+      console.warn(`Invalid grid size: ${value}, using default ${gridSizeKm}`);
       return gridSizeKm;
     }
-    return Math.max(GRID_MIN_KM, value);
+    const clamped = Math.max(GRID_MIN_KM, Math.min(MAX_GRID_KM, value));
+    if (clamped !== value) {
+      console.warn(`Grid size ${value} clamped to ${clamped} (range: ${GRID_MIN_KM}-${MAX_GRID_KM})`);
+    }
+    return clamped;
   }
 
   function formatInputValue(value) {
@@ -27,12 +33,17 @@
   }
 
   function clampThickness(value) {
-    if (Number.isNaN(value) || !Number.isFinite(value)) {
-      return gridThicknessPx;
-    }
     const min = 1;
     const max = 5;
-    return Math.max(min, Math.min(max, Math.round(value)));
+    if (Number.isNaN(value) || !Number.isFinite(value) || value <= 0) {
+      console.warn(`Invalid thickness: ${value}, using default ${gridThicknessPx}`);
+      return gridThicknessPx;
+    }
+    const clamped = Math.max(min, Math.min(max, Math.round(value)));
+    if (clamped !== value) {
+      console.warn(`Thickness ${value} clamped to ${clamped} (range: ${min}-${max})`);
+    }
+    return clamped;
   }
 
   function updateGrid() {
@@ -159,8 +170,6 @@
       gridEnabled = true;
       gridLayer.addTo(map);
       updateGrid();
-      // Register event listeners when grid is enabled
-      map.on('moveend zoomend rotate', updateGrid);
       syncUI();
     }
   }
@@ -170,8 +179,6 @@
       gridEnabled = false;
       gridLayer.clearLayers();
       map.removeLayer(gridLayer);
-      // Remove event listeners when grid is disabled
-      map.off('moveend zoomend rotate', updateGrid);
       syncUI();
     }
   }
@@ -286,8 +293,7 @@
   new GridMenuControl({ position: 'topright' }).addTo(map);
 
   setMenuOpen(false);
-  
-  // Note: Event listeners for map updates are now registered in enableGrid()
-  // and removed in disableGrid() to prevent unnecessary updates when grid is disabled
+
+  map.on('moveend zoomend rotate', updateGrid);
   syncUI();
 })();

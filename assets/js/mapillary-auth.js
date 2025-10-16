@@ -103,10 +103,14 @@
             headers: {
               'Content-Type': 'application/x-www-form-urlencoded'
             },
-            body: body.toString()
+            body: body.toString(),
+            signal: AbortSignal.timeout(15000) // 15 second timeout
           });
         } catch (networkError) {
-          throw new Error('Network error while requesting Mapillary token.');
+          if (networkError.name === 'AbortError') {
+            throw new Error('Token request timed out. Please check your internet connection and try again.');
+          }
+          throw new Error(`Network error while requesting Mapillary token: ${networkError.message}`);
         }
 
         const raw = await response.text();
