@@ -47,6 +47,9 @@
   <script src='assets/vendor/mapillary/mapillary.js'></script>
   <link href='assets/vendor/mapillary/mapillary.css' rel='stylesheet' />
 
+  <!-- OpenCV.js for panorama stitching -->
+  <script async src="https://docs.opencv.org/4.x/opencv.js" type="text/javascript"></script>
+
   <link rel="stylesheet" href="assets/css/styles.css"/>
 
   <script src="assets/js/icons.js"></script>
@@ -417,7 +420,21 @@
             🖼️ Upload Images
           </button>
         </div>
-        
+
+        <!-- Panorama Stitching Section -->
+        <div class="panorama-section" id="panoramaSection" style="display:none">
+          <div class="panorama-controls">
+            <button class="panorama-btn" id="stitchPanoramaBtn" onclick="stitchPanorama()" disabled>
+              🔗 Stitch Panorama
+            </button>
+            <span class="panorama-hint" id="panoramaHint">Select 2+ images below</span>
+          </div>
+          <div class="panorama-progress" id="panoramaProgress" style="display:none">
+            <div class="spinner"></div>
+            <p id="panoramaStatus">Processing...</p>
+          </div>
+        </div>
+
         <!-- Layers Panel -->
         <div class="layers-panel" id="layersPanel">
           <h4>Image Layers</h4>
@@ -714,6 +731,7 @@
   <script src="assets/js/line-of-sight.js"></script>
   <script src="assets/js/mapillary-auth.js"></script>
   <script src="assets/js/street-view.js"></script>
+  <script src="assets/js/panorama-stitching.js"></script>
 
   <!-- Firefox Browser Check -->
   <script>
