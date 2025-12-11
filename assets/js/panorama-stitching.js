@@ -3,7 +3,10 @@
 // Track which images are selected for stitching
 let selectedForPanorama = new Set();
 let opencvReady = false;
-let opencvLoadPromise = null;
+let opencvReadyResolve = null;
+let opencvReadyPromise = new Promise((resolve) => {
+  opencvReadyResolve = resolve;
+});
 
 // Check if OpenCV is ready with all required features
 function isOpenCVFullyLoaded() {
@@ -18,54 +21,28 @@ function isOpenCVFullyLoaded() {
     && typeof cv.matFromImageData === 'function';
 }
 
-// Setup OpenCV ready callback using official mechanism
-function initOpenCVMonitoring() {
-  // If already loaded, resolve immediately
+// Called by Module.onRuntimeInitialized in HTML
+window.onOpenCVReady = function() {
+  console.log('OpenCV.js is ready for panorama stitching');
+
+  // Verify all required features are available
   if (isOpenCVFullyLoaded()) {
     opencvReady = true;
-    return Promise.resolve();
+    opencvReadyResolve();
+    updateOpenCVStatusUI('ready', 'Ready');
+    updatePanoramaControls();
+  } else {
+    console.error('OpenCV loaded but missing required features');
+    updateOpenCVStatusUI('error', 'Incomplete - missing Stitcher API');
   }
-
-  // Create promise if not already created
-  if (!opencvLoadPromise) {
-    opencvLoadPromise = new Promise((resolve, reject) => {
-      // Use OpenCV's official ready callback if available
-      if (typeof cv !== 'undefined' && cv.onRuntimeInitialized) {
-        const originalCallback = cv.onRuntimeInitialized;
-        cv.onRuntimeInitialized = function() {
-          if (originalCallback) originalCallback();
-          opencvReady = true;
-          console.log('OpenCV.js fully loaded and ready');
-          resolve();
-        };
-      } else {
-        // Fallback: poll for OpenCV availability
-        let attempts = 0;
-        const maxAttempts = 300; // 30 seconds
-
-        const checkInterval = setInterval(() => {
-          attempts++;
-
-          if (isOpenCVFullyLoaded()) {
-            clearInterval(checkInterval);
-            opencvReady = true;
-            console.log('OpenCV.js fully loaded and ready');
-            resolve();
-          } else if (attempts >= maxAttempts) {
-            clearInterval(checkInterval);
-            reject(new Error('OpenCV.js failed to load completely after 30 seconds. Please refresh the page.'));
-          }
-        }, 100);
-      }
-    });
-  }
-
-  return opencvLoadPromise;
-}
+};
 
 // Wait for OpenCV to be ready
 function waitForOpenCV() {
-  return initOpenCVMonitoring();
+  if (opencvReady) {
+    return Promise.resolve();
+  }
+  return opencvReadyPromise;
 }
 
 // Toggle image selection for panorama stitching
@@ -166,18 +143,21 @@ function updateOpenCVStatusUI(status, message) {
   }
 }
 
-// Manual OpenCV load function
+// Manual OpenCV load function (not needed with Module pattern, but kept for UI consistency)
 function loadOpenCVManually() {
-  updateOpenCVStatusUI('loading', 'Loading OpenCV.js...');
+  // OpenCV loads automatically via Module pattern
+  // This just updates the UI to show it's loading
+  updateOpenCVStatusUI('loading', 'OpenCV.js is loading...');
 
-  initOpenCVMonitoring()
+  // Wait for the promise
+  waitForOpenCV()
     .then(() => {
       updateOpenCVStatusUI('ready', 'Ready');
       updatePanoramaControls();
     })
     .catch((error) => {
       console.error('OpenCV loading error:', error);
-      updateOpenCVStatusUI('error', 'Failed to load - Click to retry');
+      updateOpenCVStatusUI('error', 'Failed to load - Refresh page to retry');
     });
 }
 
@@ -404,34 +384,26 @@ function isolatePanoramaEvents() {
 // Initialize when page loads
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', () => {
-    // Set initial UI state
-    updateOpenCVStatusUI('idle', 'Click "Load OpenCV.js" to begin');
+    // Set initial UI state - show loading since OpenCV.js is loading in background
+    updateOpenCVStatusUI('loading', 'Loading OpenCV.js...');
     isolatePanoramaEvents();
 
-    // Start monitoring OpenCV automatically
-    initOpenCVMonitoring()
-      .then(() => {
-        updateOpenCVStatusUI('ready', 'Ready');
-        updatePanoramaControls();
-      })
-      .catch((error) => {
-        console.error('OpenCV loading error:', error);
-        updateOpenCVStatusUI('error', 'Failed to load - Click to retry');
-      });
-  });
-} else {
-  // Set initial UI state
-  updateOpenCVStatusUI('idle', 'Click "Load OpenCV.js" to begin');
-  isolatePanoramaEvents();
-
-  // Start monitoring OpenCV automatically
-  initOpenCVMonitoring()
-    .then(() => {
+    // Check if OpenCV already loaded (unlikely but possible)
+    if (opencvReady) {
       updateOpenCVStatusUI('ready', 'Ready');
       updatePanoramaControls();
-    })
-    .catch((error) => {
-      console.error('OpenCV loading error:', error);
-      updateOpenCVStatusUI('error', 'Failed to load - Click to retry');
-    });
+    }
+    // Otherwise, onOpenCVReady callback will update UI when ready
+  });
+} else {
+  // Set initial UI state - show loading since OpenCV.js is loading in background
+  updateOpenCVStatusUI('loading', 'Loading OpenCV.js...');
+  isolatePanoramaEvents();
+
+  // Check if OpenCV already loaded (unlikely but possible)
+  if (opencvReady) {
+    updateOpenCVStatusUI('ready', 'Ready');
+    updatePanoramaControls();
+  }
+  // Otherwise, onOpenCVReady callback will update UI when ready
 }
