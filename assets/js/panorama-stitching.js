@@ -3,43 +3,69 @@
 // Track which images are selected for stitching
 let selectedForPanorama = new Set();
 let opencvReady = false;
+let opencvLoadPromise = null;
 
 // Check if OpenCV is ready with all required features
+function isOpenCVFullyLoaded() {
+  return typeof cv !== 'undefined'
+    && cv.Mat
+    && cv.Stitcher
+    && typeof cv.Stitcher.create === 'function'
+    && cv.Stitcher_PANORAMA !== undefined
+    && cv.Stitcher_OK !== undefined
+    && cv.MatVector
+    && typeof cv.imshow === 'function'
+    && typeof cv.matFromImageData === 'function';
+}
+
+// Setup OpenCV ready callback using official mechanism
+function initOpenCVMonitoring() {
+  // If already loaded, resolve immediately
+  if (isOpenCVFullyLoaded()) {
+    opencvReady = true;
+    return Promise.resolve();
+  }
+
+  // Create promise if not already created
+  if (!opencvLoadPromise) {
+    opencvLoadPromise = new Promise((resolve, reject) => {
+      // Use OpenCV's official ready callback if available
+      if (typeof cv !== 'undefined' && cv.onRuntimeInitialized) {
+        const originalCallback = cv.onRuntimeInitialized;
+        cv.onRuntimeInitialized = function() {
+          if (originalCallback) originalCallback();
+          opencvReady = true;
+          console.log('OpenCV.js fully loaded and ready');
+          resolve();
+        };
+      } else {
+        // Fallback: poll for OpenCV availability
+        let attempts = 0;
+        const maxAttempts = 300; // 30 seconds
+
+        const checkInterval = setInterval(() => {
+          attempts++;
+
+          if (isOpenCVFullyLoaded()) {
+            clearInterval(checkInterval);
+            opencvReady = true;
+            console.log('OpenCV.js fully loaded and ready');
+            resolve();
+          } else if (attempts >= maxAttempts) {
+            clearInterval(checkInterval);
+            reject(new Error('OpenCV.js failed to load completely after 30 seconds. Please refresh the page.'));
+          }
+        }, 100);
+      }
+    });
+  }
+
+  return opencvLoadPromise;
+}
+
+// Wait for OpenCV to be ready
 function waitForOpenCV() {
-  return new Promise((resolve, reject) => {
-    // Check for all required OpenCV features
-    function isOpenCVReady() {
-      return typeof cv !== 'undefined'
-        && cv.Mat
-        && cv.Stitcher
-        && cv.Stitcher.create
-        && cv.Stitcher_PANORAMA !== undefined
-        && cv.MatVector
-        && cv.imshow;
-    }
-
-    if (isOpenCVReady()) {
-      opencvReady = true;
-      resolve();
-      return;
-    }
-
-    const checkInterval = setInterval(() => {
-      if (isOpenCVReady()) {
-        clearInterval(checkInterval);
-        opencvReady = true;
-        resolve();
-      }
-    }, 100);
-
-    // Timeout after 30 seconds
-    setTimeout(() => {
-      clearInterval(checkInterval);
-      if (!opencvReady) {
-        reject(new Error('OpenCV.js failed to load completely. Please refresh the page and try again.'));
-      }
-    }, 30000);
-  });
+  return initOpenCVMonitoring();
 }
 
 // Toggle image selection for panorama stitching
@@ -78,10 +104,14 @@ function updatePanoramaControls() {
     return;
   }
 
-  // Enable button only if 2 or more images selected
-  if (selectedCount >= 2) {
+  // Enable button only if 2 or more images selected AND OpenCV is ready
+  if (!opencvReady) {
+    btn.disabled = true;
+    hint.textContent = 'Loading OpenCV.js...';
+    hint.style.color = '#ff9800';
+  } else if (selectedCount >= 2) {
     btn.disabled = false;
-    hint.textContent = `${selectedCount} images selected`;
+    hint.textContent = `${selectedCount} images selected - Ready to stitch`;
     hint.style.color = '#28a745';
   } else {
     btn.disabled = true;
@@ -131,13 +161,19 @@ async function stitchPanorama() {
     return;
   }
 
+  // Double-check OpenCV isn't ready - this shouldn't happen if button was properly disabled
+  if (!opencvReady && !isOpenCVFullyLoaded()) {
+    alert('⏳ OpenCV.js is still loading. Please wait a few more seconds and try again.\n\nThe library is large (~8MB) and may take 10-30 seconds to download and initialize on first load.');
+    return;
+  }
+
   try {
     // Show progress indicator
     progressDiv.style.display = 'flex';
     statusText.textContent = 'Loading OpenCV...';
     btn.disabled = true;
 
-    // Wait for OpenCV to be ready
+    // Wait for OpenCV to be ready (with timeout)
     await waitForOpenCV();
 
     statusText.textContent = 'Preparing images...';
@@ -159,6 +195,13 @@ async function stitchPanorama() {
     }
 
     statusText.textContent = 'Detecting features and matching...';
+
+    // Final runtime check - verify OpenCV Stitcher is actually available
+    if (typeof cv === 'undefined' || !cv.Stitcher || typeof cv.Stitcher.create !== 'function') {
+      // Clean up mats before throwing error
+      mats.forEach(mat => mat.delete());
+      throw new Error('OpenCV Stitcher is not available. The library may still be loading. Please wait a few seconds and try again.');
+    }
 
     // Create a MatVector for the stitcher
     const matVec = new cv.MatVector();
@@ -298,13 +341,56 @@ function isolatePanoramaEvents() {
   }
 }
 
+// Update UI based on OpenCV loading state
+function updateOpenCVStatus() {
+  const hint = document.getElementById('panoramaHint');
+  if (!hint) return;
+
+  if (opencvReady) {
+    // OpenCV is ready, show normal hints
+    updatePanoramaControls();
+  } else {
+    // OpenCV is still loading
+    hint.textContent = 'Loading OpenCV.js...';
+    hint.style.color = '#ff9800';
+  }
+}
+
 // Initialize when page loads
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', () => {
-    updatePanoramaControls();
+    updateOpenCVStatus();
     isolatePanoramaEvents();
+
+    // Start monitoring OpenCV and update UI when ready
+    initOpenCVMonitoring()
+      .then(() => {
+        updatePanoramaControls();
+      })
+      .catch((error) => {
+        console.error('OpenCV loading error:', error);
+        const hint = document.getElementById('panoramaHint');
+        if (hint) {
+          hint.textContent = 'OpenCV.js failed to load';
+          hint.style.color = '#d32f2f';
+        }
+      });
   });
 } else {
-  updatePanoramaControls();
+  updateOpenCVStatus();
   isolatePanoramaEvents();
+
+  // Start monitoring OpenCV and update UI when ready
+  initOpenCVMonitoring()
+    .then(() => {
+      updatePanoramaControls();
+    })
+    .catch((error) => {
+      console.error('OpenCV loading error:', error);
+      const hint = document.getElementById('panoramaHint');
+      if (hint) {
+        hint.textContent = 'OpenCV.js failed to load';
+        hint.style.color = '#d32f2f';
+      }
+    });
 }
