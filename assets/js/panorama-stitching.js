@@ -85,39 +85,100 @@ function togglePanoramaSelection(layerId, event) {
   updateLayersList();
 }
 
+// Toggle panorama panel
+function togglePanoramaPanel(forceState) {
+  const panel = document.getElementById('panoramaPanel');
+  const button = document.getElementById('panoramaToggle');
+
+  if (!panel) return;
+
+  const shouldOpen = typeof forceState === 'boolean' ? forceState : !panel.classList.contains('open');
+
+  if (shouldOpen) {
+    panel.classList.add('open');
+    panel.setAttribute('aria-hidden', 'false');
+    if (button) button.setAttribute('aria-expanded', 'true');
+  } else {
+    panel.classList.remove('open');
+    panel.setAttribute('aria-hidden', 'true');
+    if (button) button.setAttribute('aria-expanded', 'false');
+  }
+}
+
 // Update panorama controls based on selection
 function updatePanoramaControls() {
-  const section = document.getElementById('panoramaSection');
   const btn = document.getElementById('stitchPanoramaBtn');
-  const hint = document.getElementById('panoramaHint');
+  const counter = document.getElementById('panoramaSelectionCount');
 
-  if (!section || !btn || !hint) return;
+  if (!btn || !counter) return;
 
   const selectedCount = selectedForPanorama.size;
 
-  // Show section if there are any uploaded images
-  if (typeof imageLayers !== 'undefined' && imageLayers.length > 0) {
-    section.style.display = 'block';
-  } else {
-    section.style.display = 'none';
-    selectedForPanorama.clear();
-    return;
-  }
+  // Update selection counter
+  counter.textContent = selectedCount === 0
+    ? 'No images selected'
+    : selectedCount === 1
+      ? '1 image selected (need 1 more)'
+      : `${selectedCount} images selected`;
 
   // Enable button only if 2 or more images selected AND OpenCV is ready
   if (!opencvReady) {
     btn.disabled = true;
-    hint.textContent = 'Loading OpenCV.js...';
-    hint.style.color = '#ff9800';
   } else if (selectedCount >= 2) {
     btn.disabled = false;
-    hint.textContent = `${selectedCount} images selected - Ready to stitch`;
-    hint.style.color = '#28a745';
   } else {
     btn.disabled = true;
-    hint.textContent = 'Select 2+ images below';
-    hint.style.color = '#666';
   }
+}
+
+// Update OpenCV status UI
+function updateOpenCVStatusUI(status, message) {
+  const dot = document.getElementById('opencvStatusDot');
+  const text = document.getElementById('opencvStatusText');
+  const loadBtn = document.getElementById('loadOpenCVBtn');
+  const progressBar = document.getElementById('opencvProgressBar');
+
+  if (!dot || !text) return;
+
+  // Remove all status classes
+  dot.classList.remove('loading', 'ready', 'error');
+
+  if (status === 'loading') {
+    dot.classList.add('loading');
+    text.textContent = message || 'Loading OpenCV.js...';
+    if (progressBar) progressBar.style.display = 'block';
+    if (loadBtn) loadBtn.style.display = 'none';
+  } else if (status === 'ready') {
+    dot.classList.add('ready');
+    text.textContent = message || 'Ready';
+    if (progressBar) progressBar.style.display = 'none';
+    if (loadBtn) loadBtn.style.display = 'none';
+  } else if (status === 'error') {
+    dot.classList.add('error');
+    text.textContent = message || 'Failed to load';
+    if (progressBar) progressBar.style.display = 'none';
+    if (loadBtn) loadBtn.style.display = 'inline-block';
+  } else {
+    // idle/initializing
+    text.textContent = message || 'Not loaded';
+    if (progressBar) progressBar.style.display = 'none';
+    if (loadBtn) loadBtn.style.display = 'inline-block';
+  }
+}
+
+// Manual OpenCV load function
+function loadOpenCVManually() {
+  updateOpenCVStatusUI('loading', 'Loading OpenCV.js...');
+
+  initOpenCVMonitoring()
+    .then(() => {
+      updateOpenCVStatusUI('ready', 'Ready');
+      updatePanoramaControls();
+    })
+    .catch((error) => {
+      console.error('OpenCV loading error:', error);
+      updateOpenCVStatusUI('error', 'Failed to load - Click to retry');
+    });
 }
 
 // Convert HTML Image to OpenCV Mat
@@ -152,8 +213,8 @@ function matToImage(mat) {
 
 // Main stitching function
 async function stitchPanorama() {
-  const progressDiv = document.getElementById('panoramaProgress');
-  const statusText = document.getElementById('panoramaStatus');
+  const progressDiv = document.getElementById('panoramaProcessing');
+  const statusText = document.getElementById('panoramaProcessingStatus');
   const btn = document.getElementById('stitchPanoramaBtn');
 
   if (selectedForPanorama.size < 2) {
@@ -169,14 +230,14 @@ async function stitchPanorama() {
 
   try {
     // Show progress indicator
-    progressDiv.style.display = 'flex';
-    statusText.textContent = 'Loading OpenCV...';
+    if (progressDiv) progressDiv.style.display = 'flex';
+    if (statusText) statusText.textContent = 'Loading OpenCV...';
     btn.disabled = true;
 
     // Wait for OpenCV to be ready (with timeout)
     await waitForOpenCV();
 
-    statusText.textContent = 'Preparing images...';
+    if (statusText) statusText.textContent = 'Preparing images...';
 
     // Get selected image layers in order
     const selectedLayers = imageLayers.filter(layer => selectedForPanorama.has(layer.id));
@@ -185,7 +246,7 @@ async function stitchPanorama() {
       throw new Error('At least 2 images are required for stitching.');
     }
 
-    statusText.textContent = `Processing ${selectedLayers.length} images...`;
+    if (statusText) statusText.textContent = `Processing ${selectedLayers.length} images...`;
 
     // Convert images to OpenCV Mats
     const mats = [];
@@ -194,7 +255,7 @@ async function stitchPanorama() {
       mats.push(mat);
     }
 
-    statusText.textContent = 'Detecting features and matching...';
+    if (statusText) statusText.textContent = 'Detecting features and matching...';
 
     // Final runtime check - verify OpenCV Stitcher is actually available
     if (typeof cv === 'undefined' || !cv.Stitcher || typeof cv.Stitcher.create !== 'function') {
@@ -211,7 +272,7 @@ async function stitchPanorama() {
     const stitcher = cv.Stitcher.create(cv.Stitcher_PANORAMA);
     const pano = new cv.Mat();
 
-    statusText.textContent = 'Stitching panorama...';
+    if (statusText) statusText.textContent = 'Stitching panorama...';
 
     // Perform stitching
     const status = stitcher.stitch(matVec, pano);
@@ -239,7 +300,7 @@ async function stitchPanorama() {
       throw new Error(errorMsg);
     }
 
-    statusText.textContent = 'Creating image layer...';
+    if (statusText) statusText.textContent = 'Creating image layer...';
 
     // Convert result to image
     const resultImage = await matToImage(pano);
@@ -281,8 +342,8 @@ async function stitchPanorama() {
     }
 
     // Hide progress
-    progressDiv.style.display = 'none';
-    btn.disabled = false;
+    if (progressDiv) progressDiv.style.display = 'none';
+    updatePanoramaControls();
 
     // Show success message
     alert(`✅ Panorama created successfully!\n\nThe stitched panorama has been added as a new image layer.`);
@@ -291,14 +352,11 @@ async function stitchPanorama() {
     console.error('Panorama stitching error:', error);
 
     // Hide progress
-    progressDiv.style.display = 'none';
-    btn.disabled = false;
+    if (progressDiv) progressDiv.style.display = 'none';
+    updatePanoramaControls();
 
     // Show error to user
     alert(`❌ Panorama Stitching Failed\n\n${error.message}\n\nTips:\n• Use images that overlap by 30-70%\n• Ensure images are from the same camera/location\n• Try selecting images in the correct sequence (left to right)\n• Images should have similar lighting and exposure`);
-
-    // Update controls
-    updatePanoramaControls();
   }
 }
 
@@ -306,22 +364,24 @@ async function stitchPanorama() {
 window.togglePanoramaSelection = togglePanoramaSelection;
 window.updatePanoramaControls = updatePanoramaControls;
 window.stitchPanorama = stitchPanorama;
+window.togglePanoramaPanel = togglePanoramaPanel;
+window.loadOpenCVManually = loadOpenCVManually;
 
 // Prevent event propagation from panorama UI to avoid interference with canvas event handlers
 function isolatePanoramaEvents() {
-  const panoramaSection = document.getElementById('panoramaSection');
-  if (!panoramaSection) return;
+  const panoramaPanel = document.getElementById('panoramaPanel');
+  if (panoramaPanel) {
+    // Stop all events from propagating beyond panorama panel to prevent
+    // interference with Konva canvas event forwarding system
+    const eventsToStop = ['mousedown', 'mouseup', 'mousemove', 'click', 'dblclick',
+                          'touchstart', 'touchend', 'touchmove', 'wheel'];
 
-  // Stop all events from propagating beyond panorama section to prevent
-  // interference with Konva canvas event forwarding system
-  const eventsToStop = ['mousedown', 'mouseup', 'mousemove', 'click', 'dblclick',
-                        'touchstart', 'touchend', 'touchmove', 'wheel'];
-
-  eventsToStop.forEach(eventType => {
-    panoramaSection.addEventListener(eventType, (e) => {
-      e.stopPropagation();
-    }, true);
-  });
+    eventsToStop.forEach(eventType => {
+      panoramaPanel.addEventListener(eventType, (e) => {
+        e.stopPropagation();
+      }, true);
+    });
+  }
 
   // Also isolate panorama checkboxes in the layers list
   // Use event delegation since layer items are dynamically created
@@ -341,56 +401,37 @@ function isolatePanoramaEvents() {
   }
 }
 
-// Update UI based on OpenCV loading state
-function updateOpenCVStatus() {
-  const hint = document.getElementById('panoramaHint');
-  if (!hint) return;
-
-  if (opencvReady) {
-    // OpenCV is ready, show normal hints
-    updatePanoramaControls();
-  } else {
-    // OpenCV is still loading
-    hint.textContent = 'Loading OpenCV.js...';
-    hint.style.color = '#ff9800';
-  }
-}
-
 // Initialize when page loads
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', () => {
-    updateOpenCVStatus();
+    // Set initial UI state
+    updateOpenCVStatusUI('idle', 'Click "Load OpenCV.js" to begin');
     isolatePanoramaEvents();
 
-    // Start monitoring OpenCV and update UI when ready
+    // Start monitoring OpenCV automatically
     initOpenCVMonitoring()
       .then(() => {
+        updateOpenCVStatusUI('ready', 'Ready');
         updatePanoramaControls();
       })
       .catch((error) => {
         console.error('OpenCV loading error:', error);
-        const hint = document.getElementById('panoramaHint');
-        if (hint) {
-          hint.textContent = 'OpenCV.js failed to load';
-          hint.style.color = '#d32f2f';
-        }
+        updateOpenCVStatusUI('error', 'Failed to load - Click to retry');
       });
   });
 } else {
-  updateOpenCVStatus();
+  // Set initial UI state
+  updateOpenCVStatusUI('idle', 'Click "Load OpenCV.js" to begin');
   isolatePanoramaEvents();
 
-  // Start monitoring OpenCV and update UI when ready
+  // Start monitoring OpenCV automatically
   initOpenCVMonitoring()
     .then(() => {
+      updateOpenCVStatusUI('ready', 'Ready');
       updatePanoramaControls();
     })
     .catch((error) => {
       console.error('OpenCV loading error:', error);
-      const hint = document.getElementById('panoramaHint');
-      if (hint) {
-        hint.textContent = 'OpenCV.js failed to load';
-        hint.style.color = '#d32f2f';
-      }
+      updateOpenCVStatusUI('error', 'Failed to load - Click to retry');
     });
 }
