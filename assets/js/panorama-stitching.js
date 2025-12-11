@@ -4,17 +4,28 @@
 let selectedForPanorama = new Set();
 let opencvReady = false;
 
-// Check if OpenCV is ready
+// Check if OpenCV is ready with all required features
 function waitForOpenCV() {
   return new Promise((resolve, reject) => {
-    if (typeof cv !== 'undefined' && cv.Mat) {
+    // Check for all required OpenCV features
+    function isOpenCVReady() {
+      return typeof cv !== 'undefined'
+        && cv.Mat
+        && cv.Stitcher
+        && cv.Stitcher.create
+        && cv.Stitcher_PANORAMA !== undefined
+        && cv.MatVector
+        && cv.imshow;
+    }
+
+    if (isOpenCVReady()) {
       opencvReady = true;
       resolve();
       return;
     }
 
     const checkInterval = setInterval(() => {
-      if (typeof cv !== 'undefined' && cv.Mat) {
+      if (isOpenCVReady()) {
         clearInterval(checkInterval);
         opencvReady = true;
         resolve();
@@ -25,7 +36,7 @@ function waitForOpenCV() {
     setTimeout(() => {
       clearInterval(checkInterval);
       if (!opencvReady) {
-        reject(new Error('OpenCV.js failed to load. Please refresh the page and try again.'));
+        reject(new Error('OpenCV.js failed to load completely. Please refresh the page and try again.'));
       }
     }, 30000);
   });
@@ -35,6 +46,7 @@ function waitForOpenCV() {
 function togglePanoramaSelection(layerId, event) {
   if (event) {
     event.stopPropagation();
+    event.stopImmediatePropagation();
   }
 
   if (selectedForPanorama.has(layerId)) {
@@ -252,11 +264,47 @@ window.togglePanoramaSelection = togglePanoramaSelection;
 window.updatePanoramaControls = updatePanoramaControls;
 window.stitchPanorama = stitchPanorama;
 
+// Prevent event propagation from panorama UI to avoid interference with canvas event handlers
+function isolatePanoramaEvents() {
+  const panoramaSection = document.getElementById('panoramaSection');
+  if (!panoramaSection) return;
+
+  // Stop all events from propagating beyond panorama section to prevent
+  // interference with Konva canvas event forwarding system
+  const eventsToStop = ['mousedown', 'mouseup', 'mousemove', 'click', 'dblclick',
+                        'touchstart', 'touchend', 'touchmove', 'wheel'];
+
+  eventsToStop.forEach(eventType => {
+    panoramaSection.addEventListener(eventType, (e) => {
+      e.stopPropagation();
+    }, true);
+  });
+
+  // Also isolate panorama checkboxes in the layers list
+  // Use event delegation since layer items are dynamically created
+  const layersPanel = document.getElementById('layersPanel');
+  if (layersPanel) {
+    layersPanel.addEventListener('change', (e) => {
+      if (e.target.matches('.panorama-checkbox input[type="checkbox"]')) {
+        e.stopPropagation();
+      }
+    }, true);
+
+    layersPanel.addEventListener('click', (e) => {
+      if (e.target.closest('.panorama-checkbox')) {
+        e.stopPropagation();
+      }
+    }, true);
+  }
+}
+
 // Initialize when page loads
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', () => {
     updatePanoramaControls();
+    isolatePanoramaEvents();
   });
 } else {
   updatePanoramaControls();
+  isolatePanoramaEvents();
 }
