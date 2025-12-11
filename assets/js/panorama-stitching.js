@@ -8,31 +8,39 @@ let opencvReadyPromise = new Promise((resolve) => {
   opencvReadyResolve = resolve;
 });
 
-// Check if OpenCV is ready with all required features
+// Check if OpenCV is ready with all required features for manual panorama stitching
 function isOpenCVFullyLoaded() {
   return typeof cv !== 'undefined'
     && cv.Mat
-    && cv.Stitcher
-    && typeof cv.Stitcher.create === 'function'
-    && cv.Stitcher_PANORAMA !== undefined
-    && cv.Stitcher_OK !== undefined
     && cv.MatVector
     && typeof cv.imshow === 'function'
-    && typeof cv.matFromImageData === 'function';
+    && typeof cv.matFromImageData === 'function'
+    // Feature detection
+    && cv.ORB && typeof cv.ORB.create === 'function'
+    // Feature matching
+    && cv.BFMatcher && typeof cv.BFMatcher.create === 'function'
+    && cv.DMatch
+    // Homography and warping
+    && typeof cv.findHomography === 'function'
+    && typeof cv.warpPerspective === 'function'
+    // Required constants
+    && cv.NORM_HAMMING !== undefined
+    && cv.RANSAC !== undefined
+    && cv.BORDER_CONSTANT !== undefined;
 }
 
 // Called by Module.onRuntimeInitialized in HTML
 window.onOpenCVReady = function() {
   console.log('OpenCV.js is ready for panorama stitching');
 
-  // Debug: Check what's available
+  // Debug: Check what's available for manual stitching
   console.log('cv exists:', typeof cv !== 'undefined');
   console.log('cv.Mat exists:', typeof cv !== 'undefined' && !!cv.Mat);
-  console.log('cv.Stitcher exists:', typeof cv !== 'undefined' && !!cv.Stitcher);
-  console.log('cv.Stitcher.create exists:', typeof cv !== 'undefined' && cv.Stitcher && typeof cv.Stitcher.create === 'function');
-  console.log('cv.Stitcher_PANORAMA:', typeof cv !== 'undefined' && cv.Stitcher_PANORAMA);
-  console.log('cv.Stitcher_OK:', typeof cv !== 'undefined' && cv.Stitcher_OK);
-  console.log('cv.MatVector exists:', typeof cv !== 'undefined' && !!cv.MatVector);
+  console.log('cv.ORB exists:', typeof cv !== 'undefined' && !!cv.ORB);
+  console.log('cv.ORB.create exists:', typeof cv !== 'undefined' && cv.ORB && typeof cv.ORB.create === 'function');
+  console.log('cv.BFMatcher exists:', typeof cv !== 'undefined' && !!cv.BFMatcher);
+  console.log('cv.findHomography exists:', typeof cv !== 'undefined' && typeof cv.findHomography === 'function');
+  console.log('cv.warpPerspective exists:', typeof cv !== 'undefined' && typeof cv.warpPerspective === 'function');
   console.log('cv.imshow exists:', typeof cv !== 'undefined' && typeof cv.imshow === 'function');
   console.log('cv.matFromImageData exists:', typeof cv !== 'undefined' && typeof cv.matFromImageData === 'function');
 
@@ -43,8 +51,8 @@ window.onOpenCVReady = function() {
     updateOpenCVStatusUI('ready', 'Ready');
     updatePanoramaControls();
   } else {
-    console.error('OpenCV loaded but missing required features');
-    updateOpenCVStatusUI('error', 'Incomplete - missing Stitcher API');
+    console.error('OpenCV loaded but missing required features for panorama stitching');
+    updateOpenCVStatusUI('error', 'Incomplete - missing required modules');
   }
 };
 
@@ -102,17 +110,19 @@ function updatePanoramaControls() {
 
   const selectedCount = selectedForPanorama.size;
 
-  // Update selection counter
+  // Update selection counter (currently supports exactly 2 images)
   counter.textContent = selectedCount === 0
     ? 'No images selected'
     : selectedCount === 1
       ? '1 image selected (need 1 more)'
-      : `${selectedCount} images selected`;
+      : selectedCount === 2
+        ? '2 images selected (ready to stitch)'
+        : `${selectedCount} images selected (please select only 2)`;
 
-  // Enable button only if 2 or more images selected AND OpenCV is ready
+  // Enable button only if exactly 2 images selected AND OpenCV is ready
   if (!opencvReady) {
     btn.disabled = true;
-  } else if (selectedCount >= 2) {
+  } else if (selectedCount === 2) {
     btn.disabled = false;
   } else {
     btn.disabled = true;
@@ -202,6 +212,207 @@ function matToImage(mat) {
   });
 }
 
+/* ========== MODULAR PANORAMA STITCHING PIPELINE ========== */
+
+/**
+ * Module 1: Feature Detection
+ * Detects ORB keypoints and computes descriptors for an image
+ * @param {cv.Mat} mat - Input image matrix
+ * @returns {{keypoints: cv.KeyPointVector, descriptors: cv.Mat}} Detected features
+ */
+function detectAndComputeFeatures(mat) {
+  const keypoints = new cv.KeyPointVector();
+  const descriptors = new cv.Mat();
+
+  // Create ORB detector with reasonable parameters
+  const orb = new cv.ORB(
+    1000,  // nfeatures - detect up to 1000 keypoints
+    1.2,   // scaleFactor - pyramid decimation ratio
+    8,     // nlevels - number of pyramid levels
+    31,    // edgeThreshold - size of border where features are not detected
+    0,     // firstLevel - level of pyramid to put source image to
+    2,     // WTA_K - number of points that produce each element of the oriented BRIEF descriptor
+    cv.ORB_HARRIS_SCORE,  // scoreType - use Harris corner detector
+    31,    // patchSize - size of patch used by oriented BRIEF descriptor
+    20     // fastThreshold - threshold on difference between intensity of the central pixel and pixels of a circle
+  );
+
+  orb.detectAndCompute(mat, new cv.Mat(), keypoints, descriptors);
+  orb.delete();
+
+  console.log(`Detected ${keypoints.size()} keypoints`);
+  return { keypoints, descriptors };
+}
+
+/**
+ * Module 2: Feature Matching
+ * Matches descriptors between two images using BFMatcher
+ * @param {cv.Mat} descriptors1 - Descriptors from first image
+ * @param {cv.Mat} descriptors2 - Descriptors from second image
+ * @returns {cv.DMatchVector} Good matches after ratio test
+ */
+function matchFeatures(descriptors1, descriptors2) {
+  // Create BFMatcher with Hamming distance (appropriate for ORB descriptors)
+  const bf = new cv.BFMatcher(cv.NORM_HAMMING, false);
+
+  // Find k=2 best matches for each descriptor (for ratio test)
+  const matches = new cv.DMatchVectorVector();
+  bf.knnMatch(descriptors1, descriptors2, matches, 2);
+
+  // Apply Lowe's ratio test to filter good matches
+  const goodMatches = new cv.DMatchVector();
+  const ratioThreshold = 0.75;  // Standard ratio test threshold
+
+  for (let i = 0; i < matches.size(); i++) {
+    const match = matches.get(i);
+    if (match.size() >= 2) {
+      const m = match.get(0);
+      const n = match.get(1);
+      // Keep match if best match is significantly better than second best
+      if (m.distance < ratioThreshold * n.distance) {
+        goodMatches.push_back(m);
+      }
+    }
+  }
+
+  bf.delete();
+  matches.delete();
+
+  console.log(`Found ${goodMatches.size()} good matches out of ${descriptors1.rows} keypoints`);
+  return goodMatches;
+}
+
+/**
+ * Module 3: Homography Estimation
+ * Computes homography matrix from matched keypoints using RANSAC
+ * @param {cv.KeyPointVector} keypoints1 - Keypoints from first image
+ * @param {cv.KeyPointVector} keypoints2 - Keypoints from second image
+ * @param {cv.DMatchVector} goodMatches - Filtered matches
+ * @returns {cv.Mat|null} Homography matrix (3x3) or null if estimation fails
+ */
+function estimateHomography(keypoints1, keypoints2, goodMatches) {
+  if (goodMatches.size() < 4) {
+    throw new Error(`Not enough matches to compute homography. Found ${goodMatches.size()}, need at least 4.`);
+  }
+
+  // Extract matched point coordinates
+  const srcPoints = [];
+  const dstPoints = [];
+
+  for (let i = 0; i < goodMatches.size(); i++) {
+    const match = goodMatches.get(i);
+    const kp1 = keypoints1.get(match.queryIdx);
+    const kp2 = keypoints2.get(match.trainIdx);
+    srcPoints.push(kp1.pt.x, kp1.pt.y);
+    dstPoints.push(kp2.pt.x, kp2.pt.y);
+  }
+
+  // Convert to cv.Mat format
+  const srcMat = cv.matFromArray(goodMatches.size(), 1, cv.CV_32FC2, srcPoints);
+  const dstMat = cv.matFromArray(goodMatches.size(), 1, cv.CV_32FC2, dstPoints);
+
+  // Find homography using RANSAC
+  const H = cv.findHomography(srcMat, dstMat, cv.RANSAC, 5.0);
+
+  srcMat.delete();
+  dstMat.delete();
+
+  if (H.empty()) {
+    return null;
+  }
+
+  console.log('Homography matrix computed successfully');
+  return H;
+}
+
+/**
+ * Module 4: Image Warping and Stitching
+ * Warps the first image onto the second image's plane and blends them
+ * @param {cv.Mat} img1 - First image (will be warped)
+ * @param {cv.Mat} img2 - Second image (reference)
+ * @param {cv.Mat} H - Homography matrix
+ * @returns {cv.Mat} Stitched panorama
+ */
+function warpAndStitch(img1, img2, H) {
+  // Calculate output canvas size
+  // Get corners of img1 after transformation
+  const corners1 = new cv.Mat(4, 1, cv.CV_32FC2);
+  corners1.data32F[0] = 0;
+  corners1.data32F[1] = 0;
+  corners1.data32F[2] = img1.cols;
+  corners1.data32F[3] = 0;
+  corners1.data32F[4] = img1.cols;
+  corners1.data32F[5] = img1.rows;
+  corners1.data32F[6] = 0;
+  corners1.data32F[7] = img1.rows;
+
+  const cornersTransformed = new cv.Mat();
+  cv.perspectiveTransform(corners1, cornersTransformed, H);
+
+  // Find bounding box
+  let minX = 0, minY = 0, maxX = img2.cols, maxY = img2.rows;
+
+  for (let i = 0; i < 4; i++) {
+    const x = cornersTransformed.data32F[i * 2];
+    const y = cornersTransformed.data32F[i * 2 + 1];
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+  }
+
+  const outputWidth = Math.ceil(maxX - minX);
+  const outputHeight = Math.ceil(maxY - minY);
+
+  console.log(`Output panorama size: ${outputWidth}x${outputHeight}`);
+
+  // Create translation matrix to shift if needed
+  const translationMat = cv.Mat.eye(3, 3, cv.CV_64F);
+  translationMat.data64F[2] = -minX;
+  translationMat.data64F[5] = -minY;
+
+  // Combine homography with translation
+  const adjustedH = new cv.Mat();
+  cv.gemm(translationMat, H, 1, new cv.Mat(), 0, adjustedH);
+
+  // Warp img1 to output canvas
+  const warped = new cv.Mat();
+  cv.warpPerspective(
+    img1,
+    warped,
+    adjustedH,
+    new cv.Size(outputWidth, outputHeight),
+    cv.INTER_LINEAR,
+    cv.BORDER_CONSTANT,
+    new cv.Scalar(0, 0, 0, 0)
+  );
+
+  // Create output mat and copy img2 into it at the correct position
+  const result = warped.clone();
+
+  // Calculate where img2 should be placed
+  const offsetX = Math.max(0, -minX);
+  const offsetY = Math.max(0, -minY);
+
+  // Simple blending: copy img2 over warped img1 where img2 exists
+  // This is a basic approach; more sophisticated blending would use alpha blending
+  const roi = result.roi(new cv.Rect(offsetX, offsetY, img2.cols, img2.rows));
+  img2.copyTo(roi);
+
+  // Cleanup
+  corners1.delete();
+  cornersTransformed.delete();
+  translationMat.delete();
+  adjustedH.delete();
+  warped.delete();
+  roi.delete();
+
+  console.log('Images stitched successfully');
+  return result;
+}
+
+/* ========== MAIN STITCHING FUNCTION ========== */
+
 // Main stitching function
 async function stitchPanorama() {
   const progressDiv = document.getElementById('panoramaProcessing');
@@ -239,64 +450,81 @@ async function stitchPanorama() {
 
     if (statusText) statusText.textContent = `Processing ${selectedLayers.length} images...`;
 
+    // NOTE: Currently supports stitching 2 images at a time
+    // Multi-image stitching would require iteratively stitching pairs
+    if (selectedLayers.length !== 2) {
+      throw new Error('Please select exactly 2 images. Multi-image stitching will be supported in a future update.');
+    }
+
     // Convert images to OpenCV Mats
-    const mats = [];
-    for (const layer of selectedLayers) {
-      const mat = imageToMat(layer.image);
-      mats.push(mat);
-    }
+    if (statusText) statusText.textContent = 'Converting images...';
+    const mat1 = imageToMat(selectedLayers[0].image);
+    const mat2 = imageToMat(selectedLayers[1].image);
 
-    if (statusText) statusText.textContent = 'Detecting features and matching...';
+    let features1, features2, matches, H, pano;
 
-    // Final runtime check - verify OpenCV Stitcher is actually available
-    if (typeof cv === 'undefined' || !cv.Stitcher || typeof cv.Stitcher.create !== 'function') {
-      // Clean up mats before throwing error
-      mats.forEach(mat => mat.delete());
-      throw new Error('OpenCV Stitcher is not available. The library may still be loading. Please wait a few seconds and try again.');
-    }
+    try {
+      // Step 1: Detect features in both images
+      if (statusText) statusText.textContent = 'Detecting features in image 1...';
+      features1 = detectAndComputeFeatures(mat1);
 
-    // Create a MatVector for the stitcher
-    const matVec = new cv.MatVector();
-    mats.forEach(mat => matVec.push_back(mat));
+      if (statusText) statusText.textContent = 'Detecting features in image 2...';
+      features2 = detectAndComputeFeatures(mat2);
 
-    // Create stitcher
-    const stitcher = cv.Stitcher.create(cv.Stitcher_PANORAMA);
-    const pano = new cv.Mat();
+      // Step 2: Match features between images
+      if (statusText) statusText.textContent = 'Matching features between images...';
+      matches = matchFeatures(features1.descriptors, features2.descriptors);
 
-    if (statusText) statusText.textContent = 'Stitching panorama...';
-
-    // Perform stitching
-    const status = stitcher.stitch(matVec, pano);
-
-    // Clean up input mats
-    mats.forEach(mat => mat.delete());
-    matVec.delete();
-
-    if (status !== cv.Stitcher_OK) {
-      // Handle different error codes
-      let errorMsg = 'Stitching failed. ';
-      switch (status) {
-        case cv.Stitcher_ERR_NEED_MORE_IMGS:
-          errorMsg += 'Need more images or images don\'t overlap enough.';
-          break;
-        case cv.Stitcher_ERR_HOMOGRAPHY_EST_FAIL:
-          errorMsg += 'Failed to estimate homography. Images may be too different or don\'t overlap.';
-          break;
-        case cv.Stitcher_ERR_CAMERA_PARAMS_ADJUST_FAIL:
-          errorMsg += 'Failed to adjust camera parameters. Try images with better overlap.';
-          break;
-        default:
-          errorMsg += 'Unknown error occurred. Please try different images.';
+      if (matches.size() < 10) {
+        throw new Error(`Not enough good matches found (${matches.size()}). Images may not overlap or be too different.\n\nTips:\n• Ensure images overlap by 30-70%\n• Use images from the same scene/location\n• Try images with distinct features (textures, corners, edges)`);
       }
-      throw new Error(errorMsg);
+
+      // Step 3: Estimate homography transformation
+      if (statusText) statusText.textContent = 'Computing image alignment...';
+      H = estimateHomography(features1.keypoints, features2.keypoints, matches);
+
+      if (!H || H.empty()) {
+        throw new Error('Failed to compute homography. Images may not have sufficient overlap or matching features.');
+      }
+
+      // Step 4: Warp and stitch images
+      if (statusText) statusText.textContent = 'Stitching images together...';
+      pano = warpAndStitch(mat1, mat2, H);
+
+      if (statusText) statusText.textContent = 'Creating image layer...';
+
+      // Convert result to image
+      const resultImage = await matToImage(pano);
+
+      // Cleanup OpenCV resources
+      mat1.delete();
+      mat2.delete();
+      features1.keypoints.delete();
+      features1.descriptors.delete();
+      features2.keypoints.delete();
+      features2.descriptors.delete();
+      matches.delete();
+      H.delete();
+      pano.delete();
+
+    } catch (innerError) {
+      // Cleanup any resources that were created before the error
+      if (mat1) mat1.delete();
+      if (mat2) mat2.delete();
+      if (features1) {
+        if (features1.keypoints) features1.keypoints.delete();
+        if (features1.descriptors) features1.descriptors.delete();
+      }
+      if (features2) {
+        if (features2.keypoints) features2.keypoints.delete();
+        if (features2.descriptors) features2.descriptors.delete();
+      }
+      if (matches) matches.delete();
+      if (H) H.delete();
+      if (pano) pano.delete();
+
+      throw innerError;  // Re-throw to outer catch
     }
-
-    if (statusText) statusText.textContent = 'Creating image layer...';
-
-    // Convert result to image
-    const resultImage = await matToImage(pano);
-    pano.delete();
-    stitcher.delete();
 
     // Add as new layer
     const newLayer = {
@@ -347,7 +575,7 @@ async function stitchPanorama() {
     updatePanoramaControls();
 
     // Show error to user
-    alert(`❌ Panorama Stitching Failed\n\n${error.message}\n\nTips:\n• Use images that overlap by 30-70%\n• Ensure images are from the same camera/location\n• Try selecting images in the correct sequence (left to right)\n• Images should have similar lighting and exposure`);
+    alert(`❌ Panorama Stitching Failed\n\n${error.message}`);
   }
 }
 
