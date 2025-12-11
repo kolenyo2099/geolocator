@@ -25,6 +25,17 @@ function isOpenCVFullyLoaded() {
 window.onOpenCVReady = function() {
   console.log('OpenCV.js is ready for panorama stitching');
 
+  // Debug: Check what's available
+  console.log('cv exists:', typeof cv !== 'undefined');
+  console.log('cv.Mat exists:', typeof cv !== 'undefined' && !!cv.Mat);
+  console.log('cv.Stitcher exists:', typeof cv !== 'undefined' && !!cv.Stitcher);
+  console.log('cv.Stitcher.create exists:', typeof cv !== 'undefined' && cv.Stitcher && typeof cv.Stitcher.create === 'function');
+  console.log('cv.Stitcher_PANORAMA:', typeof cv !== 'undefined' && cv.Stitcher_PANORAMA);
+  console.log('cv.Stitcher_OK:', typeof cv !== 'undefined' && cv.Stitcher_OK);
+  console.log('cv.MatVector exists:', typeof cv !== 'undefined' && !!cv.MatVector);
+  console.log('cv.imshow exists:', typeof cv !== 'undefined' && typeof cv.imshow === 'function');
+  console.log('cv.matFromImageData exists:', typeof cv !== 'undefined' && typeof cv.matFromImageData === 'function');
+
   // Verify all required features are available
   if (isOpenCVFullyLoaded()) {
     opencvReady = true;
