@@ -716,6 +716,8 @@ function updateLayersList() {
     const h = layer.image.height * scale;
     ctx.drawImage(layer.image, (40 - w) / 2, (40 - h) / 2, w, h);
 
+    const isPanoramaSelected = typeof selectedForPanorama !== 'undefined' && selectedForPanorama.has(layer.id);
+
     div.innerHTML = `
       <span class="layer-visibility" onclick="toggleLayerVisibility(${layer.id}, event)" title="${layer.visible ? 'Hide' : 'Show'}">
         ${layer.visible ? '👁️' : '🚫'}
@@ -723,6 +725,12 @@ function updateLayersList() {
       <img class="layer-preview" src="${canvas.toDataURL()}" alt="preview"/>
       <div class="layer-info">
         <div class="layer-name" title="${layer.name}">${layer.name}</div>
+        <label class="panorama-checkbox" onclick="event.stopPropagation()">
+          <input type="checkbox" ${isPanoramaSelected ? 'checked' : ''}
+                 onchange="togglePanoramaSelection(${layer.id}, event)"
+                 title="Select for panorama stitching"/>
+          <span>For Panorama</span>
+        </label>
       </div>
       <div class="layer-controls">
         <div class="layer-control-row">
