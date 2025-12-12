@@ -142,25 +142,23 @@ function updatePanoramaControls() {
 
   const selectedCount = selectedForPanorama.size;
 
-  // Update selection counter (currently supports exactly 2 images)
+  // Update selection counter
   counter.textContent = selectedCount === 0
     ? 'No images selected'
     : selectedCount === 1
       ? '1 image selected (need 1 more)'
-      : selectedCount === 2
-        ? '2 images selected (ready to stitch)'
-        : `${selectedCount} images selected (please select only 2)`;
+      : `${selectedCount} images selected`;
 
-  // Enable button only if exactly 2 images selected AND OpenCV is ready
+  // Enable button only if 2+ images selected AND OpenCV is ready
   if (!opencvReady) {
     btn.disabled = true;
     console.log('Stitch button disabled: OpenCV not ready');
-  } else if (selectedCount === 2) {
+  } else if (selectedCount >= 2) {
     btn.disabled = false;
-    console.log('Stitch button enabled: 2 images selected and OpenCV ready');
+    console.log(`Stitch button enabled: ${selectedCount} images selected and OpenCV ready`);
   } else {
     btn.disabled = true;
-    console.log(`Stitch button disabled: ${selectedCount} images selected (need exactly 2)`);
+    console.log(`Stitch button disabled: ${selectedCount} images selected (need at least 2)`);
   }
 }
 
@@ -495,85 +493,87 @@ async function stitchPanorama() {
 
     if (statusText) statusText.textContent = `Processing ${selectedLayers.length} images...`;
 
-    // NOTE: Currently supports stitching 2 images at a time
-    // Multi-image stitching would require iteratively stitching pairs
-    if (selectedLayers.length !== 2) {
-      throw new Error('Please select exactly 2 images. Multi-image stitching will be supported in a future update.');
+    // Multi-image stitching: iteratively stitch pairs
+    // Start with first two images, then stitch each subsequent image to the result
+    let resultImage;
+    let currentPano = null;
+
+    for (let i = 0; i < selectedLayers.length; i++) {
+      if (i === 0) {
+        // First image - convert to mat and store for next iteration
+        currentPano = imageToMat(selectedLayers[0].image);
+        continue;
+      }
+
+      const imageNum = i + 1;
+      if (statusText) statusText.textContent = `Stitching image ${imageNum} of ${selectedLayers.length}...`;
+
+      const mat2 = imageToMat(selectedLayers[i].image);
+      let features1, features2, matches, H, pano;
+
+      try {
+        // Step 1: Detect features in both images
+        if (statusText) statusText.textContent = `Detecting features (image ${imageNum})...`;
+        features1 = detectAndComputeFeatures(currentPano);
+        features2 = detectAndComputeFeatures(mat2);
+
+        // Step 2: Match features between images
+        if (statusText) statusText.textContent = `Matching features (image ${imageNum})...`;
+        matches = matchFeatures(features1.descriptors, features2.descriptors);
+
+        if (matches.size() < 10) {
+          throw new Error(`Not enough good matches found for image ${imageNum} (${matches.size()}). Images may not overlap or be too different.\n\nTips:\n• Ensure images overlap by 30-70%\n• Use images from the same scene/location\n• Try selecting images in the correct sequence`);
+        }
+
+        // Step 3: Estimate homography transformation
+        if (statusText) statusText.textContent = `Computing alignment (image ${imageNum})...`;
+        H = estimateHomography(features1.keypoints, features2.keypoints, matches);
+
+        if (!H || H.empty()) {
+          throw new Error(`Failed to compute homography for image ${imageNum}. Images may not have sufficient overlap.`);
+        }
+
+        // Step 4: Warp and stitch images
+        if (statusText) statusText.textContent = `Stitching (image ${imageNum})...`;
+        pano = warpAndStitch(currentPano, mat2, H);
+
+        // Cleanup resources from this iteration
+        features1.keypoints.delete();
+        features1.descriptors.delete();
+        features2.keypoints.delete();
+        features2.descriptors.delete();
+        matches.delete();
+        H.delete();
+        mat2.delete();
+        currentPano.delete();
+
+        // Update current panorama for next iteration
+        currentPano = pano;
+
+      } catch (innerError) {
+        // Cleanup any resources that were created before the error
+        if (features1) {
+          if (features1.keypoints) features1.keypoints.delete();
+          if (features1.descriptors) features1.descriptors.delete();
+        }
+        if (features2) {
+          if (features2.keypoints) features2.keypoints.delete();
+          if (features2.descriptors) features2.descriptors.delete();
+        }
+        if (matches) matches.delete();
+        if (H) H.delete();
+        if (pano) pano.delete();
+        if (mat2) mat2.delete();
+        if (currentPano) currentPano.delete();
+
+        throw innerError;  // Re-throw to outer catch
+      }
     }
 
-    // Convert images to OpenCV Mats
-    if (statusText) statusText.textContent = 'Converting images...';
-    const mat1 = imageToMat(selectedLayers[0].image);
-    const mat2 = imageToMat(selectedLayers[1].image);
-
-    let features1, features2, matches, H, pano, resultImage;
-
-    try {
-      // Step 1: Detect features in both images
-      if (statusText) statusText.textContent = 'Detecting features in image 1...';
-      features1 = detectAndComputeFeatures(mat1);
-
-      if (statusText) statusText.textContent = 'Detecting features in image 2...';
-      features2 = detectAndComputeFeatures(mat2);
-
-      // Step 2: Match features between images
-      if (statusText) statusText.textContent = 'Matching features between images...';
-      matches = matchFeatures(features1.descriptors, features2.descriptors);
-
-      if (matches.size() < 10) {
-        throw new Error(`Not enough good matches found (${matches.size()}). Images may not overlap or be too different.\n\nTips:\n• Ensure images overlap by 30-70%\n• Use images from the same scene/location\n• Try images with distinct features (textures, corners, edges)`);
-      }
-
-      // Step 3: Estimate homography transformation
-      if (statusText) statusText.textContent = 'Computing image alignment...';
-      H = estimateHomography(features1.keypoints, features2.keypoints, matches);
-
-      if (!H || H.empty()) {
-        throw new Error('Failed to compute homography. Images may not have sufficient overlap or matching features.');
-      }
-
-      // Step 4: Warp and stitch images
-      if (statusText) statusText.textContent = 'Stitching images together...';
-      pano = warpAndStitch(mat1, mat2, H);
-
-      if (statusText) statusText.textContent = 'Creating image layer...';
-
-      // Convert result to image
-      resultImage = await matToImage(pano);
-
-      // Cleanup OpenCV resources (not mat1/mat2 - cleaned below)
-      features1.keypoints.delete();
-      features1.descriptors.delete();
-      features2.keypoints.delete();
-      features2.descriptors.delete();
-      matches.delete();
-      H.delete();
-      pano.delete();
-
-    } catch (innerError) {
-      // Cleanup any resources that were created before the error
-      if (features1) {
-        if (features1.keypoints) features1.keypoints.delete();
-        if (features1.descriptors) features1.descriptors.delete();
-      }
-      if (features2) {
-        if (features2.keypoints) features2.keypoints.delete();
-        if (features2.descriptors) features2.descriptors.delete();
-      }
-      if (matches) matches.delete();
-      if (H) H.delete();
-      if (pano) pano.delete();
-
-      // Cleanup mat1 and mat2 before re-throwing
-      mat1.delete();
-      mat2.delete();
-
-      throw innerError;  // Re-throw to outer catch
-    }
-
-    // Cleanup mat1 and mat2 after success
-    mat1.delete();
-    mat2.delete();
+    // Convert final result to image
+    if (statusText) statusText.textContent = 'Creating image layer...';
+    resultImage = await matToImage(currentPano);
+    currentPano.delete();
 
     // Add as new layer
     const newLayer = {
