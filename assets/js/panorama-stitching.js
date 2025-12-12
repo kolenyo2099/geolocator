@@ -506,7 +506,7 @@ async function stitchPanorama() {
     const mat1 = imageToMat(selectedLayers[0].image);
     const mat2 = imageToMat(selectedLayers[1].image);
 
-    let features1, features2, matches, H, pano;
+    let features1, features2, matches, H, pano, resultImage;
 
     try {
       // Step 1: Detect features in both images
@@ -539,7 +539,7 @@ async function stitchPanorama() {
       if (statusText) statusText.textContent = 'Creating image layer...';
 
       // Convert result to image
-      const resultImage = await matToImage(pano);
+      resultImage = await matToImage(pano);
 
       // Cleanup OpenCV resources
       mat1.delete();
