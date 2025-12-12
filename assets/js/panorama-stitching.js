@@ -430,17 +430,42 @@ function warpAndStitch(img1, img2, H) {
     new cv.Scalar(0, 0, 0, 0)
   );
 
-  // Create output mat and copy img2 into it at the correct position
-  const result = warped.clone();
-
   // Calculate where img2 should be placed
   const offsetX = Math.max(0, -minX);
   const offsetY = Math.max(0, -minY);
 
-  // Simple blending: copy img2 over warped img1 where img2 exists
-  // This is a basic approach; more sophisticated blending would use alpha blending
-  const roi = result.roi(new cv.Rect(offsetX, offsetY, img2.cols, img2.rows));
-  img2.copyTo(roi);
+  // Create a mask for img2 to know which pixels are valid
+  const mask2 = new cv.Mat(img2.rows, img2.cols, cv.CV_8UC1, new cv.Scalar(255));
+
+  // Create output and place img2 first at its position
+  const result = new cv.Mat(outputHeight, outputWidth, img2.type(), new cv.Scalar(0, 0, 0, 0));
+  const roi2 = result.roi(new cv.Rect(offsetX, offsetY, img2.cols, img2.rows));
+  img2.copyTo(roi2);
+  roi2.delete();
+
+  // Now blend warped img1 where there's no img2 content
+  // For each pixel in warped, if result pixel is black (empty), copy from warped
+  for (let y = 0; y < outputHeight; y++) {
+    for (let x = 0; x < outputWidth; x++) {
+      const resultIdx = (y * outputWidth + x) * 4;
+      const warpedIdx = (y * outputWidth + x) * 4;
+
+      // Check if result pixel is empty (black/transparent)
+      const resultIsEmpty = result.data[resultIdx] === 0 &&
+                           result.data[resultIdx + 1] === 0 &&
+                           result.data[resultIdx + 2] === 0;
+
+      if (resultIsEmpty) {
+        // Copy from warped
+        result.data[resultIdx] = warped.data[warpedIdx];
+        result.data[resultIdx + 1] = warped.data[warpedIdx + 1];
+        result.data[resultIdx + 2] = warped.data[warpedIdx + 2];
+        if (result.channels() === 4) {
+          result.data[resultIdx + 3] = warped.data[warpedIdx + 3];
+        }
+      }
+    }
+  }
 
   // Cleanup
   corners1.delete();
@@ -448,7 +473,7 @@ function warpAndStitch(img1, img2, H) {
   translationMat.delete();
   adjustedH.delete();
   warped.delete();
-  roi.delete();
+  mask2.delete();
 
   console.log('Images stitched successfully');
   return result;
