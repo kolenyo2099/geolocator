@@ -10,23 +10,33 @@ let opencvReadyPromise = new Promise((resolve) => {
 
 // Check if OpenCV is ready with all required features for manual panorama stitching
 function isOpenCVFullyLoaded() {
-  return typeof cv !== 'undefined'
-    && cv.Mat
-    && cv.MatVector
-    && typeof cv.imshow === 'function'
-    && typeof cv.matFromImageData === 'function'
-    // Feature detection
-    && cv.ORB && typeof cv.ORB.create === 'function'
-    // Feature matching
-    && cv.BFMatcher && typeof cv.BFMatcher.create === 'function'
-    && cv.DMatch
-    // Homography and warping
-    && typeof cv.findHomography === 'function'
-    && typeof cv.warpPerspective === 'function'
-    // Required constants
-    && cv.NORM_HAMMING !== undefined
-    && cv.RANSAC !== undefined
-    && cv.BORDER_CONSTANT !== undefined;
+  if (typeof cv === 'undefined') return false;
+
+  // Core features
+  if (!cv.Mat || !cv.MatVector) return false;
+  if (typeof cv.imshow !== 'function') return false;
+  if (typeof cv.matFromImageData !== 'function') return false;
+
+  // Feature detection - ORB can be created with constructor or create method
+  if (!cv.ORB) return false;
+
+  // Feature matching - BFMatcher constructor
+  if (!cv.BFMatcher) return false;
+
+  // Homography and warping
+  if (typeof cv.findHomography !== 'function') return false;
+  if (typeof cv.warpPerspective !== 'function') return false;
+  if (typeof cv.perspectiveTransform !== 'function') return false;
+
+  // Required constants
+  if (cv.NORM_HAMMING === undefined) return false;
+  if (cv.RANSAC === undefined) return false;
+  if (cv.BORDER_CONSTANT === undefined) return false;
+  if (cv.CV_32FC2 === undefined) return false;
+  if (cv.CV_64F === undefined) return false;
+  if (cv.INTER_LINEAR === undefined) return false;
+
+  return true;
 }
 
 // Called by Module.onRuntimeInitialized in HTML
@@ -34,15 +44,32 @@ window.onOpenCVReady = function() {
   console.log('OpenCV.js is ready for panorama stitching');
 
   // Debug: Check what's available for manual stitching
-  console.log('cv exists:', typeof cv !== 'undefined');
-  console.log('cv.Mat exists:', typeof cv !== 'undefined' && !!cv.Mat);
-  console.log('cv.ORB exists:', typeof cv !== 'undefined' && !!cv.ORB);
-  console.log('cv.ORB.create exists:', typeof cv !== 'undefined' && cv.ORB && typeof cv.ORB.create === 'function');
-  console.log('cv.BFMatcher exists:', typeof cv !== 'undefined' && !!cv.BFMatcher);
-  console.log('cv.findHomography exists:', typeof cv !== 'undefined' && typeof cv.findHomography === 'function');
-  console.log('cv.warpPerspective exists:', typeof cv !== 'undefined' && typeof cv.warpPerspective === 'function');
-  console.log('cv.imshow exists:', typeof cv !== 'undefined' && typeof cv.imshow === 'function');
-  console.log('cv.matFromImageData exists:', typeof cv !== 'undefined' && typeof cv.matFromImageData === 'function');
+  const checks = {
+    'cv exists': typeof cv !== 'undefined',
+    'cv.Mat': !!(cv && cv.Mat),
+    'cv.MatVector': !!(cv && cv.MatVector),
+    'cv.ORB': !!(cv && cv.ORB),
+    'cv.BFMatcher': !!(cv && cv.BFMatcher),
+    'cv.findHomography': !!(cv && typeof cv.findHomography === 'function'),
+    'cv.warpPerspective': !!(cv && typeof cv.warpPerspective === 'function'),
+    'cv.perspectiveTransform': !!(cv && typeof cv.perspectiveTransform === 'function'),
+    'cv.imshow': !!(cv && typeof cv.imshow === 'function'),
+    'cv.matFromImageData': !!(cv && typeof cv.matFromImageData === 'function'),
+    'cv.NORM_HAMMING': !!(cv && cv.NORM_HAMMING !== undefined),
+    'cv.RANSAC': !!(cv && cv.RANSAC !== undefined),
+    'cv.BORDER_CONSTANT': !!(cv && cv.BORDER_CONSTANT !== undefined),
+    'cv.CV_32FC2': !!(cv && cv.CV_32FC2 !== undefined),
+    'cv.CV_64F': !!(cv && cv.CV_64F !== undefined),
+    'cv.INTER_LINEAR': !!(cv && cv.INTER_LINEAR !== undefined)
+  };
+
+  console.table(checks);
+
+  // Show what's missing
+  const missing = Object.entries(checks).filter(([key, val]) => !val).map(([key]) => key);
+  if (missing.length > 0) {
+    console.error('Missing OpenCV features:', missing.join(', '));
+  }
 
   // Verify all required features are available
   if (isOpenCVFullyLoaded()) {
@@ -73,8 +100,10 @@ function togglePanoramaSelection(layerId, event) {
 
   if (selectedForPanorama.has(layerId)) {
     selectedForPanorama.delete(layerId);
+    console.log(`Deselected image ${layerId} for panorama. Total selected: ${selectedForPanorama.size}`);
   } else {
     selectedForPanorama.add(layerId);
+    console.log(`Selected image ${layerId} for panorama. Total selected: ${selectedForPanorama.size}`);
   }
 
   updatePanoramaControls();
@@ -106,7 +135,10 @@ function updatePanoramaControls() {
   const btn = document.getElementById('stitchPanoramaBtn');
   const counter = document.getElementById('panoramaSelectionCount');
 
-  if (!btn || !counter) return;
+  if (!btn || !counter) {
+    console.warn('Panorama controls not found in DOM');
+    return;
+  }
 
   const selectedCount = selectedForPanorama.size;
 
@@ -122,10 +154,13 @@ function updatePanoramaControls() {
   // Enable button only if exactly 2 images selected AND OpenCV is ready
   if (!opencvReady) {
     btn.disabled = true;
+    console.log('Stitch button disabled: OpenCV not ready');
   } else if (selectedCount === 2) {
     btn.disabled = false;
+    console.log('Stitch button enabled: 2 images selected and OpenCV ready');
   } else {
     btn.disabled = true;
+    console.log(`Stitch button disabled: ${selectedCount} images selected (need exactly 2)`);
   }
 }
 
@@ -224,18 +259,18 @@ function detectAndComputeFeatures(mat) {
   const keypoints = new cv.KeyPointVector();
   const descriptors = new cv.Mat();
 
-  // Create ORB detector with reasonable parameters
-  const orb = new cv.ORB(
-    1000,  // nfeatures - detect up to 1000 keypoints
-    1.2,   // scaleFactor - pyramid decimation ratio
-    8,     // nlevels - number of pyramid levels
-    31,    // edgeThreshold - size of border where features are not detected
-    0,     // firstLevel - level of pyramid to put source image to
-    2,     // WTA_K - number of points that produce each element of the oriented BRIEF descriptor
-    cv.ORB_HARRIS_SCORE,  // scoreType - use Harris corner detector
-    31,    // patchSize - size of patch used by oriented BRIEF descriptor
-    20     // fastThreshold - threshold on difference between intensity of the central pixel and pixels of a circle
-  );
+  // Create ORB detector - try create() method first, fall back to constructor
+  let orb;
+  try {
+    if (cv.ORB.create) {
+      orb = cv.ORB.create(1000);  // nfeatures parameter
+    } else {
+      orb = new cv.ORB(1000);
+    }
+  } catch (e) {
+    console.error('Failed to create ORB detector:', e);
+    throw new Error('ORB feature detector not available in this OpenCV.js build');
+  }
 
   orb.detectAndCompute(mat, new cv.Mat(), keypoints, descriptors);
   orb.delete();
@@ -253,7 +288,17 @@ function detectAndComputeFeatures(mat) {
  */
 function matchFeatures(descriptors1, descriptors2) {
   // Create BFMatcher with Hamming distance (appropriate for ORB descriptors)
-  const bf = new cv.BFMatcher(cv.NORM_HAMMING, false);
+  let bf;
+  try {
+    if (cv.BFMatcher.create) {
+      bf = cv.BFMatcher.create(cv.NORM_HAMMING, false);
+    } else {
+      bf = new cv.BFMatcher(cv.NORM_HAMMING, false);
+    }
+  } catch (e) {
+    console.error('Failed to create BFMatcher:', e);
+    throw new Error('BFMatcher not available in this OpenCV.js build');
+  }
 
   // Find k=2 best matches for each descriptor (for ratio test)
   const matches = new cv.DMatchVectorVector();
@@ -590,33 +635,33 @@ window.loadOpenCVManually = loadOpenCVManually;
 function isolatePanoramaEvents() {
   const panoramaPanel = document.getElementById('panoramaPanel');
   if (panoramaPanel) {
-    // Stop all events from propagating beyond panorama panel to prevent
-    // interference with Konva canvas event forwarding system
-    const eventsToStop = ['mousedown', 'mouseup', 'mousemove', 'click', 'dblclick',
+    // Stop events from propagating OUTSIDE the panel (not capture phase)
+    // This prevents interference with Konva canvas but allows buttons inside to work
+    const eventsToStop = ['mousedown', 'mouseup', 'mousemove', 'dblclick',
                           'touchstart', 'touchend', 'touchmove', 'wheel'];
 
     eventsToStop.forEach(eventType => {
       panoramaPanel.addEventListener(eventType, (e) => {
         e.stopPropagation();
-      }, true);
+      }, false);  // Use bubble phase, not capture
     });
   }
 
   // Also isolate panorama checkboxes in the layers list
   // Use event delegation since layer items are dynamically created
-  const layersPanel = document.getElementById('layersPanel');
-  if (layersPanel) {
-    layersPanel.addEventListener('change', (e) => {
+  const imagePanel = document.getElementById('imagePanel');
+  if (imagePanel) {
+    imagePanel.addEventListener('change', (e) => {
       if (e.target.matches('.panorama-checkbox input[type="checkbox"]')) {
         e.stopPropagation();
       }
-    }, true);
+    }, false);
 
-    layersPanel.addEventListener('click', (e) => {
+    imagePanel.addEventListener('click', (e) => {
       if (e.target.closest('.panorama-checkbox')) {
         e.stopPropagation();
       }
-    }, true);
+    }, false);
   }
 }
 
