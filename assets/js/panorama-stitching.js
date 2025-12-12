@@ -541,9 +541,7 @@ async function stitchPanorama() {
       // Convert result to image
       resultImage = await matToImage(pano);
 
-      // Cleanup OpenCV resources
-      mat1.delete();
-      mat2.delete();
+      // Cleanup OpenCV resources (not mat1/mat2 - cleaned below)
       features1.keypoints.delete();
       features1.descriptors.delete();
       features2.keypoints.delete();
@@ -554,8 +552,6 @@ async function stitchPanorama() {
 
     } catch (innerError) {
       // Cleanup any resources that were created before the error
-      if (mat1) mat1.delete();
-      if (mat2) mat2.delete();
       if (features1) {
         if (features1.keypoints) features1.keypoints.delete();
         if (features1.descriptors) features1.descriptors.delete();
@@ -568,8 +564,16 @@ async function stitchPanorama() {
       if (H) H.delete();
       if (pano) pano.delete();
 
+      // Cleanup mat1 and mat2 before re-throwing
+      mat1.delete();
+      mat2.delete();
+
       throw innerError;  // Re-throw to outer catch
     }
+
+    // Cleanup mat1 and mat2 after success
+    mat1.delete();
+    mat2.delete();
 
     // Add as new layer
     const newLayer = {
