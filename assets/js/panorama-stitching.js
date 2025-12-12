@@ -564,10 +564,14 @@ async function stitchPanorama() {
       if (H) H.delete();
       if (pano) pano.delete();
 
+      // Cleanup mat1 and mat2 before re-throwing
+      mat1.delete();
+      mat2.delete();
+
       throw innerError;  // Re-throw to outer catch
     }
 
-    // Cleanup mat1 and mat2 now (whether success or error)
+    // Cleanup mat1 and mat2 after success
     mat1.delete();
     mat2.delete();
 
